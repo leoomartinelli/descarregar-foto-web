@@ -462,9 +462,11 @@ def verificar_atualizacao():
             return
         if _git("fetch", "origin", "main", timeout=8).returncode != 0:
             return
-        local = _git("rev-parse", "HEAD", timeout=3).stdout.strip()
         remoto = _git("rev-parse", "origin/main", timeout=3).stdout.strip()
-        if local and remoto and local != remoto:
+        # Só há atualização se o origin/main tem commits que o HEAD local não tem.
+        # (HEAD igual ou à frente do remoto = nada a atualizar.)
+        ja_contem = _git("merge-base", "--is-ancestor", "origin/main", "HEAD", timeout=3).returncode == 0
+        if remoto and not ja_contem:
             UPDATE.update(disponivel=True, msg=f"Nova versão disponível ({remoto[:7]}).")
     except Exception as e:
         print(f"[AutoUpdate] verificação ignorada: {e}")
