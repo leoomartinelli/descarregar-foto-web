@@ -86,3 +86,5 @@ progress{width:100%;height:16px;margin-top:8px}
 /* reserva espaco para o painel nao cobrir os botoes do topo */
 @media(min-width:900px){body.com-uploads .topbar{padding-right:330px}}
 @media(max-width:899px){body.com-uploads .wrap{padding-top:170px}}
+#uploads .uphead{cursor:grab;user-select:none;touch-action:none}
+#uploads.arrastando .uphead{cursor:grabbing}#uploads.arrastando{opacity:.9}

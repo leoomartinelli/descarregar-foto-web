@@ -511,6 +511,27 @@ function uploadsDesenha(lista) {
   $up.querySelector('#up-min').onclick = () => { upMin = !upMin; upUlt = ''; uploadsAtualiza(); };
   const x = $up.querySelector('#up-x'); if (x) x.onclick = async () => { await api('/api/uploads/limpar', { body: {} }); upUlt = ''; uploadsAtualiza(); };
 }
+// arrastar pelo cabecalho (mouse ou toque); a posicao fica salva no navegador
+function upPosiciona(x, y) {
+  const w = $up.offsetWidth, h = $up.offsetHeight;
+  x = Math.max(0, Math.min(x, innerWidth - w)); y = Math.max(0, Math.min(y, innerHeight - Math.min(h, 60)));
+  $up.style.left = x + 'px'; $up.style.top = y + 'px'; $up.style.right = 'auto';
+  return { x, y };
+}
+try { const pos = JSON.parse(localStorage.getItem('uploadsPos') || 'null'); if (pos) upPosiciona(pos.x, pos.y); } catch (e) { }
+let upDrag = null;
+$up.addEventListener('pointerdown', e => {
+  if (!e.target.closest('.uphead') || e.target.closest('button')) return;
+  const r = $up.getBoundingClientRect(); upDrag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+  $up.setPointerCapture(e.pointerId); $up.classList.add('arrastando'); e.preventDefault();
+});
+$up.addEventListener('pointermove', e => { if (upDrag) upPosiciona(e.clientX - upDrag.dx, e.clientY - upDrag.dy); });
+const upSolta = () => {
+  if (!upDrag) return; upDrag = null; $up.classList.remove('arrastando');
+  try { const r = $up.getBoundingClientRect(); localStorage.setItem('uploadsPos', JSON.stringify({ x: r.left, y: r.top })); } catch (e) { }
+};
+$up.addEventListener('pointerup', upSolta); $up.addEventListener('pointercancel', upSolta);
+addEventListener('resize', () => { if ($up.style.left) { const r = $up.getBoundingClientRect(); upPosiciona(r.left, r.top); } });
 let upAtivosAntes = 0;
 async function uploadsAtualiza() {
   try {
