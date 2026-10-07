@@ -160,8 +160,8 @@ async function vHome() {
     }
   });
   q('#b-avulso').onclick = async () => { await api('/api/avulso', { body: {} }); S.avulso = true; S.entrou = true; ir('descarregar'); };
-  q('#n-modo').onchange = async e => { await api('/api/rede/modo', { body: { modo: e.target.value } }); vHome(); };
-  q('#n-rein').onclick = async () => { await api('/api/rede/reiniciar', { body: {} }); toast('Serviços de rede local reiniciados com sucesso!'); vHome(); };
+  q('#n-modo').onchange = async e => { ler(); await api('/api/rede/modo', { body: { modo: e.target.value } }); await carregar(); vHome(); };
+  q('#n-rein').onclick = async () => { await api('/api/rede/reiniciar', { body: {} }); toast('Serviços de rede local reiniciados com sucesso!'); await carregar(); vHome(); };
   const sync = q('#n-sync'); if (sync) sync.onclick = async () => { try { await api('/api/rede/sincronizar', { body: {} }); S.entrou = true; ir('descarregar'); } catch (e) { alerta('Erro de Sincronização', e.message); } };
   // atualiza lista de auxiliares / lider detectado sem perder o formulario
   iniciarPoll(async () => { if (S.view !== 'home' || document.activeElement.tagName === 'INPUT') return;
