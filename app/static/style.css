@@ -73,3 +73,16 @@ progress{width:100%;height:16px;margin-top:8px}
 .nav{display:flex;justify-content:space-between;gap:10px;margin-top:18px}
 .nav button{min-width:150px}
 .resumo button{flex:none;white-space:nowrap}
+
+/* painel de envios ao Drive */
+#uploads{position:fixed;top:12px;right:12px;width:310px;max-width:calc(100vw - 24px);max-height:70vh;overflow:auto;background:var(--card);border:1px solid var(--bord);border-radius:12px;box-shadow:0 6px 24px #0006;padding:10px 12px;z-index:60}
+#uploads .uphead{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:6px;font-size:.9rem}
+#uploads .uphead button{padding:2px 8px;margin-left:4px}
+#uploads progress{height:9px;margin:3px 0}
+.upjob{padding:6px 0;border-top:1px solid var(--bord)}.upjob:first-of-type{border-top:0}
+.uprow{display:flex;justify-content:space-between;gap:6px}
+.upjob.concluido progress::-webkit-progress-value{background:var(--verde)}
+.upjob.erro progress::-webkit-progress-value{background:var(--lar)}
+/* reserva espaco para o painel nao cobrir os botoes do topo */
+@media(min-width:900px){body.com-uploads .topbar{padding-right:330px}}
+@media(max-width:899px){body.com-uploads .wrap{padding-top:170px}}

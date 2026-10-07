@@ -269,7 +269,7 @@ def status_transferencia():
 def nova_transferencia():
     E.arquivos_transferidos = []
     E.transfer = {"estado": "idle", "progresso": 0, "total": 0, "feitos": 0, "msg": ""}
-    E.upload = {"estado": "idle", "progresso": 0, "total": 0, "feitos": 0, "msg": ""}
+    # os envios ao Drive em andamento NAO sao tocados: continuam em segundo plano
     return {"ok": True}
 
 
@@ -326,14 +326,20 @@ def revisor_abrir_pasta(d: dict = Body(default={})):
 @app.post("/api/upload/iniciar")
 def upload_iniciar(d: dict = Body(default={})):
     try:
-        return drive.iniciar_upload(d.get("link", ""))
+        return drive.iniciar_upload(d.get("link", ""), E.sessao_fotografo or "")
     except RuntimeError as e:
         erro(str(e))
 
 
-@app.get("/api/upload/status")
-def upload_status():
-    return E.upload
+@app.get("/api/uploads")
+def upload_lista():
+    return E.uploads
+
+
+@app.post("/api/uploads/limpar")
+def upload_limpar():
+    drive.limpar_concluidos()
+    return {"ok": True}
 
 
 # ======================= historico =======================

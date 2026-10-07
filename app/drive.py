@@ -2,6 +2,7 @@
 import concurrent.futures
 import json
 import os
+import queue
 import threading
 
 from . import core
@@ -163,26 +164,31 @@ def nome_pasta(link_ou_id):
         return None
 
 
-# ---------- upload ----------
+# ---------- upload (fila em segundo plano) ----------
 
 _MIME = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.mp4': 'video/mp4'}
+_fila = queue.Queue()
+_worker_ativo = False
+_lock_fila = threading.Lock()
+_contador = 0
 
 
-def iniciar_upload(link_pasta):
+def iniciar_upload(link_pasta, fotografo=""):
+    """Enfileira o envio das fotos atuais. Retorna na hora; o envio roda em segundo plano,
+    um job por vez (cada job usa 2 conexoes paralelas, como no app original)."""
+    global _contador, _worker_ativo
     if not DISPONIVEL:
         raise RuntimeError("Bibliotecas da API do Google não estão instaladas.")
     if not E.arquivos_transferidos:
         raise RuntimeError("Não há fotos disponíveis para upload!")
     if not os.path.exists(core.PATH_CRED):
         raise RuntimeError("credentials.json não encontrado. Configure a Conta Google.")
-    if E.upload["estado"] == "rodando":
-        raise RuntimeError("Já existe um upload em andamento.")
     creds = _credenciais()
     if not creds:
         raise RuntimeError("Você não está logado no Google. Faça o login na tela 'Conta Google'.")
 
     folder_id = extrair_id_pasta(link_pasta)
-    destino_nome = "a raiz do seu Google Drive"
+    destino_nome = "a raiz do Google Drive"
     if folder_id != 'root':
         try:
             meta = build('drive', 'v3', credentials=creds).files().get(
@@ -195,16 +201,40 @@ def iniciar_upload(link_pasta):
         else:
             destino_nome = f"a pasta '{meta.get('name')}'"
 
-    arquivos = list(E.arquivos_transferidos)
-    E.upload = {"estado": "rodando", "progresso": 0, "total": len(arquivos), "feitos": 0,
-                "msg": f"Iniciando envio de {len(arquivos)} fotos...", "erros": 0}
-    threading.Thread(target=_enviar, args=(creds, folder_id, arquivos, destino_nome), daemon=True).start()
-    return {"total": len(arquivos)}
+    arquivos = list(E.arquivos_transferidos)  # copia: o proximo fotografo pode trocar a lista global
+    with _lock_fila:
+        _contador += 1
+        job = {"id": _contador, "fotografo": fotografo or "Fotógrafo", "total": len(arquivos), "feitos": 0,
+               "progresso": 0, "erros": 0, "estado": "fila", "destino": destino_nome,
+               "msg": "Na fila de envio..."}
+        E.uploads.append(job)
+        del E.uploads[:-20]  # mantem so os 20 mais recentes
+        _fila.put((job, creds, folder_id, arquivos))
+        if not _worker_ativo:
+            _worker_ativo = True
+            threading.Thread(target=_worker, daemon=True).start()
+    return {"id": job["id"], "total": job["total"]}
 
 
-def _enviar(creds, folder_id, arquivos, destino_nome):
+def limpar_concluidos():
+    E.uploads[:] = [j for j in E.uploads if j["estado"] in ("fila", "rodando")]
+
+
+def _worker():
+    global _worker_ativo
+    while True:
+        with _lock_fila:
+            if _fila.empty():
+                _worker_ativo = False
+                return
+            job, creds, folder_id, arquivos = _fila.get()
+        _enviar(job, creds, folder_id, arquivos)
+
+
+def _enviar(job, creds, folder_id, arquivos):
     lock = threading.Lock()
-    total = len(arquivos)
+    total = job["total"]
+    job.update(estado="rodando", msg=f"Enviando 0/{total}...")
 
     def um(caminho):
         nome = os.path.basename(caminho)
@@ -224,17 +254,17 @@ def _enviar(creds, folder_id, arquivos, destino_nome):
             except Exception as e:
                 print(f"Erro ao enviar {nome}: {e}")
                 with lock:
-                    E.upload["erros"] += 1
+                    job["erros"] += 1
         with lock:
-            E.upload["feitos"] += 1
-            E.upload["progresso"] = E.upload["feitos"] / total
-            E.upload["msg"] = f"Enviando ({E.upload['feitos']}/{total}) fotos para o Drive..."
+            job["feitos"] += 1
+            job["progresso"] = job["feitos"] / total
+            job["msg"] = f"Enviando {job['feitos']}/{total}..."
 
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
             list(ex.map(um, arquivos))
-        ok = total - E.upload["erros"]
-        E.upload.update(estado="concluido", progresso=1,
-                        msg=f"{ok} de {total} fotos enviadas para {destino_nome}.")
+        ok = total - job["erros"]
+        job.update(estado="concluido" if not job["erros"] else "erro", progresso=1,
+                   msg=f"{ok} de {total} fotos enviadas para {job['destino']}.")
     except Exception as e:
-        E.upload.update(estado="erro", msg=f"Erro durante o envio: {e}")
+        job.update(estado="erro", msg=f"Erro durante o envio: {e}")

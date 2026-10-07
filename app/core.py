@@ -71,7 +71,7 @@ class Estado:
         self.servir_finalizado_remotamente = False
         # jobs em background
         self.transfer = {"estado": "idle", "progresso": 0, "total": 0, "feitos": 0, "msg": ""}
-        self.upload = {"estado": "idle", "progresso": 0, "total": 0, "feitos": 0, "msg": ""}
+        self.uploads = []  # fila/historico de envios ao Drive (cada um e um "job")
         self.login = {"estado": "idle", "msg": ""}
 
 

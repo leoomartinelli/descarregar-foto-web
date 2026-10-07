@@ -175,7 +175,7 @@ async function vDescarregar() {
   const st = S.st, sv = st.active_servir;
   S.entrou = true; S.avulso = !sv;
   const W = S.wiz || (S.wiz = { step: 1, pastas: [] });
-  const tr = await api('/api/transferencia/status'); const up = await api('/api/upload/status');
+  const tr = await api('/api/transferencia/status');
   if (tr.estado === 'rodando') W.step = 4;
   else if (tr.estado === 'concluido' || st.transferidas > 0) W.step = 5;
   else if (W.step >= 4) W.step = 3;
@@ -231,7 +231,7 @@ async function vDescarregar() {
     <div class="row" style="margin-top:8px"><button class="cinza" id="b-abrir">📁 Abrir Pasta</button><button class="cinza" id="b-novo">🔄 Novo Descarregamento</button></div>
     <h3>☁️ Enviar para o Google Drive (opcional)</h3><select id="s-drive">${optsDrive.map(o => `<option ${S.sel.drive === o.r ? 'selected' : ''}>${esc(o.r)}</option>`).join('')}</select>
     <button class="lar" id="b-up" style="margin-top:8px;width:100%" ${st.transferidas ? '' : 'disabled'}>⬆ Enviar fotos para o Drive</button>
-    <progress id="up-pg" value="${up.progresso || 0}" max="1" class="${up.estado === 'idle' ? 'hidden' : ''}"></progress><div id="up-t" class="mut mini">${esc(up.msg || '')}</div>`;
+    <p class="mut mini">O envio roda em segundo plano — você já pode iniciar um novo descarregamento. O progresso aparece no canto superior direito.</p>`;
 
   $app.innerHTML = `<div class="wrap" style="max-width:760px">
   <div class="topbar"><div><h1>${sv ? '🙏 ' + esc(sv.nome) : '📂 Modo Avulso'}</h1><div class="mut mini">${sv ? 'Dia do Servir ativo' : 'Sem dia de servir'}</div></div>
@@ -337,15 +337,10 @@ async function vDescarregar() {
     q('#b-abrir').onclick = () => api('/api/revisor/abrir-pasta', { body: {} }).catch(e => toast(e.message, true));
     q('#b-novo').onclick = async () => { await api('/api/transferencia/nova', { body: {} }); S.sel.nome = ''; S.sel.outro = ''; W.step = 1; W.pastas = []; S.oChave = null; await carregar(); vDescarregar(); };
     q('#s-drive').onchange = e => { S.sel.drive = e.target.value; };
-    const acompanhaUp = () => iniciarPoll(async () => {
-      const u = await api('/api/upload/status'); if (!q('#up-pg')) return; q('#up-pg').classList.remove('hidden'); q('#up-pg').value = u.progresso; q('#up-t').textContent = u.msg;
-      if (u.estado !== 'rodando') { pararPoll(); q('#b-up').disabled = false; if (u.estado !== 'idle') alerta(u.estado === 'erro' ? 'Erro de Upload' : 'Upload Concluído', u.msg); }
-    }, 800);
     q('#b-up').onclick = async () => {
       const o = optsDrive.find(x => x.r === S.sel.drive);
-      try { await api('/api/upload/iniciar', { body: { link: o ? o.l : '' } }); q('#b-up').disabled = true; acompanhaUp(); } catch (e) { alerta('Upload', e.message); }
+      try { await api('/api/upload/iniciar', { body: { link: o ? o.l : '' } }); toast('Envio ao Drive iniciado em segundo plano.'); uploadsAtualiza(); } catch (e) { alerta('Upload', e.message); }
     };
-    if (up.estado === 'rodando') { q('#b-up').disabled = true; acompanhaUp(); }
   }
 }
 
@@ -495,5 +490,36 @@ async function vGoogle() {
   q('#g-test').onclick = async () => { q('#g-msg').textContent = '🧪 Testando conexão com a API do Google Drive...'; try { const c = await api('/api/google/testar', { body: {} }); q('#g-conta').textContent = `👤 ${c.nome} (${c.email})`; q('#g-msg').textContent = `✅ Conexão bem-sucedida! Logado como ${c.email}`; } catch (e) { q('#g-msg').className = 'bad'; q('#g-msg').textContent = '❌ ' + e.message; } };
   q('#g-desc').onclick = async () => { if (await confirmar('Confirmar Desconexão', 'Deseja realmente desconectar a conta do Google e remover o token.json?')) { await api('/api/google/desconectar', { body: {} }); toast('Conta desconectada.'); vGoogle(); } };
 }
+
+// ---------- painel de envios ao Drive (segundo plano, visivel em qualquer tela) ----------
+const $up = document.createElement('div'); $up.id = 'uploads'; $up.className = 'hidden'; document.body.appendChild($up);
+let upMin = false, upUlt = '';
+function uploadsDesenha(lista) {
+  const chave = JSON.stringify(lista) + upMin;
+  if (chave === upUlt) return; upUlt = chave;
+  document.body.classList.toggle('com-uploads', lista.length > 0);
+  if (!lista.length) { $up.classList.add('hidden'); return; }
+  $up.classList.remove('hidden');
+  const ativos = lista.filter(j => j.estado === 'fila' || j.estado === 'rodando');
+  const feitos = lista.reduce((a, j) => a + j.feitos, 0), total = lista.reduce((a, j) => a + j.total, 0);
+  const titulo = ativos.length ? `☁️ Enviando ao Drive · ${ativos.length} em andamento` : '☁️ Envios ao Drive concluídos';
+  $up.innerHTML = `<div class="uphead"><b>${titulo}</b><span><button class="pq cinza" id="up-min">${upMin ? '▢' : '–'}</button>${ativos.length ? '' : '<button class="pq cinza" id="up-x">✕</button>'}</span></div>
+    ${upMin ? `<progress value="${total ? feitos / total : 0}" max="1"></progress>` : lista.slice().reverse().map(j => `<div class="upjob ${j.estado}">
+      <div class="uprow"><span>${j.estado === 'concluido' ? '✅' : j.estado === 'erro' ? '⚠️' : j.estado === 'fila' ? '⏳' : '⬆'} <b>${esc(j.fotografo)}</b></span><span class="mini">${j.feitos}/${j.total}</span></div>
+      <progress value="${j.progresso}" max="1"></progress>
+      <div class="mini mut">${esc(j.estado === 'concluido' || j.estado === 'erro' ? j.msg : j.estado === 'fila' ? 'Na fila de envio...' : 'Enviando para ' + j.destino)}${j.erros ? ` · <span class="bad">${j.erros} com erro</span>` : ''}</div></div>`).join('')}`;
+  $up.querySelector('#up-min').onclick = () => { upMin = !upMin; upUlt = ''; uploadsAtualiza(); };
+  const x = $up.querySelector('#up-x'); if (x) x.onclick = async () => { await api('/api/uploads/limpar', { body: {} }); upUlt = ''; uploadsAtualiza(); };
+}
+let upAtivosAntes = 0;
+async function uploadsAtualiza() {
+  try {
+    const l = await api('/api/uploads'); uploadsDesenha(l);
+    const ativos = l.filter(j => j.estado === 'fila' || j.estado === 'rodando').length;
+    if (ativos < upAtivosAntes) { const ult = l.filter(j => j.estado === 'concluido' || j.estado === 'erro').pop(); if (ult) toast(ult.estado === 'erro' ? `⚠️ Envio de ${ult.fotografo} terminou com erros` : `✅ Envio de ${ult.fotografo} concluído`, ult.estado === 'erro'); }
+    upAtivosAntes = ativos;
+  } catch (e) { }
+}
+setInterval(uploadsAtualiza, 1500); uploadsAtualiza();
 
 render();
