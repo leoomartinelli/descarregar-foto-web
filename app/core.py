@@ -9,8 +9,9 @@ import time
 from datetime import date
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.path.join(BASE_DIR, "data")
-DEFAULT_DEST = os.path.join(BASE_DIR, "Fotos_Sistema")
+# DATA_DIR / FOTOS_DIR permitem apontar para outras pastas (usado nos testes, para nao tocar nos dados reais)
+DATA_DIR = os.environ.get("DATA_DIR") or os.path.join(BASE_DIR, "data")
+DEFAULT_DEST = os.environ.get("FOTOS_DIR") or os.path.join(BASE_DIR, "Fotos_Sistema")
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(DEFAULT_DEST, exist_ok=True)
 

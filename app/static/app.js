@@ -178,13 +178,16 @@ async function vDescarregar() {
   const tr = await api('/api/transferencia/status');
   if (tr.estado === 'rodando') W.step = 4;
   else if (tr.estado === 'concluido' || st.transferidas > 0) W.step = 5;
-  else if (W.step >= 4) W.step = 3;
+  else if (W.step >= 4) W.step = sv ? 2 : 3;
+  if (sv && W.step === 3) W.step = 2;
+  const nP = k => (sv && k > 3 ? k - 1 : k);   // numero exibido do passo
 
   // opcoes de destino local e de Drive
   const optsDest = []; if (sv && sv.local_path) optsDest.push({ r: 'Pasta do Servir: ' + (sv.local_nome || sv.local_path), p: sv.local_path });
   optsDest.push({ r: 'Pasta do Aplicativo (Padrão)', p: st.destino_padrao });
   st.pastas_local.forEach(p => optsDest.push({ r: p.nome, p: p.caminho }));
   if (!S.sel.destR || !optsDest.concat([{ r: 'Escolher pasta personalizada...' }]).some(o => o.r === S.sel.destR)) { S.sel.destR = optsDest[0].r; S.sel.destP = optsDest[0].p; }
+  if (sv) { S.sel.destR = optsDest[0].r; S.sel.destP = optsDest[0].p; }
   const optsDrive = []; const dfs = sv ? (sv.drive_folders && sv.drive_folders.length ? sv.drive_folders : (sv.drive_link ? [{ link: sv.drive_link, nome: sv.drive_nome || 'Configurada' }] : [])) : [];
   dfs.forEach(d => optsDrive.push({ r: 'Pasta do Servir: ' + d.nome, l: d.link }));
   optsDrive.push({ r: 'Raiz do Google Drive (Padrão)', l: '' }); st.pastas_drive.forEach(p => optsDrive.push({ r: p.nome, l: p.link }));
@@ -200,7 +203,8 @@ async function vDescarregar() {
   const resumoOrigem = () => `💾 ${esc(S.oCam || '')} · ${W.pastas.length} pasta(s) selecionada(s)`;
 
   // --- cabecalho + indicador de passos ---
-  const stepper = `<div class="stepper">${PASSOS.map((n, i) => { const k = i + 1; return `<div class="stp ${k < W.step ? 'done' : k === W.step ? 'cur' : ''}"><span>${k < W.step ? '✓' : k}</span><small>${n}</small></div>`; }).join('<i></i>')}</div>`;
+  const passosVis = sv ? PASSOS.filter((_, i) => i !== 2) : PASSOS, atual = nP(W.step);
+  const stepper = `<div class="stepper">${passosVis.map((n, i) => { const k = i + 1; return `<div class="stp ${k < atual ? 'done' : k === atual ? 'cur' : ''}"><span>${k < atual ? '✓' : k}</span><small>${n}</small></div>`; }).join('<i></i>')}</div>`;
   const resumos = [];
   if (W.step > 1) resumos.push({ k: 1, t: resumoOrigem() });
   if (W.step > 2) resumos.push({ k: 2, t: `👤 <b>${esc(nomeFot())}</b>${sv ? ' · 📂 ' + esc(catAtual()) : ''}` });
@@ -218,15 +222,16 @@ async function vDescarregar() {
       <label>Em qual categoria salvar?</label><select id="s-cat">${cats.map(c => `<option ${S.sel.cat === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>`
       : `<label>Nome do fotógrafo</label><input type="text" id="s-nome" value="${esc(S.sel.nome || '')}" placeholder="Digite o nome do fotógrafo">
       <label style="font-weight:400;display:flex;gap:8px;align-items:center"><input type="checkbox" id="s-sub" ${S.sel.sub ? 'checked' : ''}> Criar subpasta com o nome do fotógrafo</label>`}
+    ${sv ? '<label>As fotos serão salvas em</label><div class="path" id="s-final">…</div>' : ''}
     <p id="s-erro" class="bad mini"></p>
-    <div class="nav"><button class="cinza" id="w-back">⬅ Voltar</button><button class="verde" id="w-next">Continuar ➜</button></div>`;
+    <div class="nav"><button class="cinza" id="w-back">⬅ Voltar</button><button class="verde" id="w-next">${sv ? '▶ Iniciar Descarregamento' : 'Continuar ➜'}</button></div>`;
   else if (W.step === 3) corpo = `<h2>Passo 3 · Onde salvar no computador?</h2>
     <select id="s-dest">${optsDest.map(o => `<option ${S.sel.destR === o.r ? 'selected' : ''}>${esc(o.r)}</option>`).join('')}<option ${S.sel.destR === 'Escolher pasta personalizada...' ? 'selected' : ''}>Escolher pasta personalizada...</option></select>
     <label>As fotos serão salvas em</label><div class="path" id="s-final">…</div>
     <div class="nav"><button class="cinza" id="w-back">⬅ Voltar</button><button class="verde" id="b-iniciar">▶ Iniciar Descarregamento</button></div>`;
-  else if (W.step === 4) corpo = `<h2>Passo 4 · Copiando fotos…</h2><p class="mut">Não feche esta página nem remova o cartão até terminar.</p>
+  else if (W.step === 4) corpo = `<h2>Passo ${nP(4)} · Copiando fotos…</h2><p class="mut">Não feche esta página nem remova o cartão até terminar.</p>
     <progress id="pg" value="${tr.progresso || 0}" max="1"></progress><div id="pg-t" class="mut" style="margin-top:6px">${esc(tr.msg || '')}</div>`;
-  else corpo = `<h2 class="ok">✅ Passo 5 · Descarregamento concluído!</h2><p class="mut">${esc(tr.msg || '')}${st.transferidas ? ` · ${st.transferidas} foto(s) disponíveis para revisão` : ''}</p>
+  else corpo = `<h2 class="ok">✅ Passo ${nP(5)} · Descarregamento concluído!</h2><p class="mut">${esc(tr.msg || '')}${st.transferidas ? ` · ${st.transferidas} foto(s) disponíveis para revisão` : ''}</p>
     <button class="grande" id="b-sel" ${st.transferidas ? '' : 'disabled'}>🖼️ Selecionar Fotos (apagar as ruins)</button>
     <div class="row" style="margin-top:8px"><button class="cinza" id="b-abrir">📁 Abrir Pasta</button><button class="cinza" id="b-novo">🔄 Novo Descarregamento</button></div>
     <h3>☁️ Enviar para o Google Drive (opcional)</h3><select id="s-drive">${optsDrive.map(o => `<option ${S.sel.drive === o.r ? 'selected' : ''}>${esc(o.r)}</option>`).join('')}</select>
@@ -248,6 +253,30 @@ async function vDescarregar() {
   }
   $app.querySelectorAll('[data-ed]').forEach(b => b.onclick = () => { W.step = +b.dataset.ed; vDescarregar(); });
   const ir_ = n => { W.step = n; vDescarregar(); };
+
+  async function atualizaFinal() {
+    const el = q('#s-final'); if (!el) return;
+    if (!S.sel.destP) { el.textContent = 'Selecione a pasta de destino acima...'; return; }
+    try { const d = await api(`/api/destino/preview?base=${encodeURIComponent(S.sel.destP)}&fotografo=${encodeURIComponent(nomeFot())}&categoria=${encodeURIComponent(catAtual())}&subpasta=${subpasta()}`); S.finalPath = d.caminho; el.textContent = d.caminho; } catch (e) { }
+  }
+  async function iniciar() {
+      const body = { fotografo: nomeFot(), destino_base: S.sel.destP, pastas: W.pastas, categoria: catAtual(), subpasta: subpasta() };
+      try {
+        const plano = await api('/api/transferencia/plano', { body });
+        if (plano.total_encontrados === 0) return alerta('Informação', 'Nenhuma imagem encontrada nas pastas selecionadas.');
+        let modo = 'novas';
+        if (plano.novas === 0 && plano.ja_descarregados > 0) {
+          if (!await confirmar('Fotos Já Descarregadas', `Atenção: Todas as ${plano.ja_descarregados} fotos encontradas já foram descarregadas anteriormente!\n\nDeseja descarregá-las novamente?`)) return;
+          modo = 'todas';
+        } else if (plano.novas > 0 && plano.ja_descarregados > 0) {
+          if (!await confirmar('Fotos Já Descarregadas', `Atenção: Foram detectadas ${plano.ja_descarregados} fotos já descarregadas anteriormente nesta pasta.\n\nDeseja descarregar apenas as ${plano.novas} novas fotos tiradas após o último descarregamento?\n(Se selecionar 'Não', todas as ${plano.todas} fotos serão copiadas).`)) modo = 'todas';
+        }
+        const temRaw = modo === 'novas' ? plano.tem_raw_novas : plano.tem_raw;
+        if (temRaw && !await confirmar('Fotos em RAW Detectadas', 'Atenção: Foram detectadas fotos em formato RAW (.cr3, .cr2, .nef, .arw) nas pastas selecionadas.\n\nElas serão copiadas no formato original. Deseja prosseguir com o descarregamento?')) return;
+        await api('/api/transferencia/iniciar', { body: { ...body, modo } });
+        ir_(4);
+      } catch (e) { toast(e.message, true); }
+  }
 
   // ---- passo 1 ----
   if (W.step === 1) {
@@ -276,20 +305,17 @@ async function vDescarregar() {
   // ---- passo 2 ----
   if (W.step === 2) {
     if (sv) {
-      q('#s-fot').onchange = e => { S.sel.fot = e.target.value; q('#s-outro').classList.toggle('hidden', e.target.value !== 'Outro...'); if (e.target.value === 'Outro...') q('#s-outro').focus(); };
-      q('#s-outro').oninput = e => { S.sel.outro = e.target.value; };
-      q('#s-cat').onchange = e => { S.sel.cat = e.target.value; };
+      q('#s-fot').onchange = e => { S.sel.fot = e.target.value; q('#s-outro').classList.toggle('hidden', e.target.value !== 'Outro...'); if (e.target.value === 'Outro...') q('#s-outro').focus(); atualizaFinal(); };
+      q('#s-outro').oninput = e => { S.sel.outro = e.target.value; atualizaFinal(); };
+      q('#s-cat').onchange = e => { S.sel.cat = e.target.value; atualizaFinal(); };
     } else { q('#s-nome').oninput = e => { S.sel.nome = e.target.value; }; q('#s-sub').onchange = e => { S.sel.sub = e.target.checked; }; q('#s-nome').focus(); }
-    const avancar = () => { if (!nomeOk()) { q('#s-erro').textContent = nomeFot() ? 'O nome não pode conter / \\ : * ? " < > |' : 'Selecione ou digite o nome do fotógrafo.'; return; } ir_(3); };
+    const avancar = () => { if (!nomeOk()) { q('#s-erro').textContent = nomeFot() ? 'O nome não pode conter / \\ : * ? " < > |' : 'Selecione ou digite o nome do fotógrafo.'; return; } if (sv) iniciar(); else ir_(3); };
     q('#w-next').onclick = avancar; q('#w-back').onclick = () => ir_(1);
     $app.querySelectorAll('input[type=text]').forEach(i => i.onkeydown = e => { if (e.key === 'Enter') avancar(); });
+    if (sv) atualizaFinal();
   }
   // ---- passo 3 ----
   if (W.step === 3) {
-    async function atualizaFinal() {
-      if (!S.sel.destP) { q('#s-final').textContent = 'Selecione a pasta de destino acima...'; return; }
-      try { const d = await api(`/api/destino/preview?base=${encodeURIComponent(S.sel.destP)}&fotografo=${encodeURIComponent(nomeFot())}&categoria=${encodeURIComponent(catAtual())}&subpasta=${subpasta()}`); S.finalPath = d.caminho; q('#s-final').textContent = d.caminho; } catch (e) { }
-    }
     await atualizaFinal();
     q('#w-back').onclick = () => ir_(2);
     q('#s-dest').onchange = async e => {
@@ -298,24 +324,7 @@ async function vDescarregar() {
       else { const o = optsDest.find(x => x.r === v); S.sel.destR = v; S.sel.destP = o.p; }
       atualizaFinal();
     };
-    q('#b-iniciar').onclick = async () => {
-      const body = { fotografo: nomeFot(), destino_base: S.sel.destP, pastas: W.pastas, categoria: catAtual(), subpasta: subpasta() };
-      try {
-        const plano = await api('/api/transferencia/plano', { body });
-        if (plano.total_encontrados === 0) return alerta('Informação', 'Nenhuma imagem encontrada nas pastas selecionadas.');
-        let modo = 'novas';
-        if (plano.novas === 0 && plano.ja_descarregados > 0) {
-          if (!await confirmar('Fotos Já Descarregadas', `Atenção: Todas as ${plano.ja_descarregados} fotos encontradas já foram descarregadas anteriormente!\n\nDeseja descarregá-las novamente?`)) return;
-          modo = 'todas';
-        } else if (plano.novas > 0 && plano.ja_descarregados > 0) {
-          if (!await confirmar('Fotos Já Descarregadas', `Atenção: Foram detectadas ${plano.ja_descarregados} fotos já descarregadas anteriormente nesta pasta.\n\nDeseja descarregar apenas as ${plano.novas} novas fotos tiradas após o último descarregamento?\n(Se selecionar 'Não', todas as ${plano.todas} fotos serão copiadas).`)) modo = 'todas';
-        }
-        const temRaw = modo === 'novas' ? plano.tem_raw_novas : plano.tem_raw;
-        if (temRaw && !await confirmar('Fotos em RAW Detectadas', 'Atenção: Foram detectadas fotos em formato RAW (.cr3, .cr2, .nef, .arw) nas pastas selecionadas.\n\nElas serão copiadas no formato original. Deseja prosseguir com o descarregamento?')) return;
-        await api('/api/transferencia/iniciar', { body: { ...body, modo } });
-        ir_(4);
-      } catch (e) { toast(e.message, true); }
-    };
+    q('#b-iniciar').onclick = iniciar;
   }
   // ---- passo 4 ----
   if (W.step === 4) {
