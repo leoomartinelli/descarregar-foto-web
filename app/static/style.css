@@ -115,3 +115,5 @@ input[type=checkbox]:checked:disabled{background:var(--verde);border-color:var(-
 .pd-c label:hover{background:#1f6aa522}
 .pd-c label:has(input:disabled){cursor:default}.pd-c label:has(input:disabled):hover{background:none}
 .pd-h label{cursor:pointer}
+#uploads .upfiles{font-size:.8rem;margin:2px 0 3px;font-family:ui-monospace,monospace}
+#uploads .upfiles div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.85}

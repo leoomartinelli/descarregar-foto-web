@@ -243,7 +243,7 @@ def iniciar_upload(link_pasta, fotografo=""):
     with _lock_fila:
         _contador += 1
         job = {"id": _contador, "fotografo": fotografo or "Fotógrafo", "total": len(arquivos), "feitos": 0,
-               "progresso": 0, "erros": 0, "estado": "fila", "destino": destino_nome,
+               "progresso": 0, "erros": 0, "estado": "fila", "destino": destino_nome, "atuais": [],
                "msg": "Na fila de envio..."}
         E.uploads.append(job)
         del E.uploads[:-20]  # mantem so os 20 mais recentes
@@ -276,6 +276,8 @@ def _enviar(job, creds, folder_id, arquivos):
 
     def um(caminho):
         nome = os.path.basename(caminho)
+        with lock:
+            job["atuais"].append(nome)   # so para exibir na tela: arquivos sendo enviados agora
         if os.path.exists(caminho):
             try:
                 svc = build('drive', 'v3', credentials=creds)
@@ -294,6 +296,8 @@ def _enviar(job, creds, folder_id, arquivos):
                 with lock:
                     job["erros"] += 1
         with lock:
+            if nome in job["atuais"]:
+                job["atuais"].remove(nome)
             job["feitos"] += 1
             job["progresso"] = job["feitos"] / total
             job["msg"] = f"Enviando {job['feitos']}/{total}..."
@@ -302,7 +306,7 @@ def _enviar(job, creds, folder_id, arquivos):
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
             list(ex.map(um, arquivos))
         ok = total - job["erros"]
-        job.update(estado="concluido" if not job["erros"] else "erro", progresso=1,
+        job.update(estado="concluido" if not job["erros"] else "erro", progresso=1, atuais=[],
                    msg=f"{ok} de {total} fotos enviadas para {job['destino']}.")
     except Exception as e:
-        job.update(estado="erro", msg=f"Erro durante o envio: {e}")
+        job.update(estado="erro", atuais=[], msg=f"Erro durante o envio: {e}")
