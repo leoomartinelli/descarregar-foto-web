@@ -196,20 +196,22 @@ def criar_pastas_categorias(servir):
     svc = build('drive', 'v3', credentials=creds)
     resultado = []
     for pasta in servir.get("drive_folders", []):
+        if pasta.get("auto"):
+            continue  # pastas de categoria criadas antes: nao sao "base"
         base = extrair_id_pasta(pasta.get("link"))
         if base == 'root':
             continue  # nunca cria categorias soltas na raiz do Drive
         for cat in servir.get("pastas_predefinidas", []):
             nome = core.nome_pasta_categoria(cat)
             try:
-                _pasta_filha(svc, nome, base)
-                resultado.append({"base": pasta.get("nome"), "pasta": nome, "ok": True})
+                fid = _pasta_filha(svc, nome, base)
+                resultado.append({"base": pasta.get("nome"), "pasta": nome, "categoria": cat, "id": fid, "ok": True})
             except Exception as e:
-                resultado.append({"base": pasta.get("nome"), "pasta": nome, "ok": False, "erro": str(e)})
+                resultado.append({"base": pasta.get("nome"), "pasta": nome, "categoria": cat, "ok": False, "erro": str(e)})
     return resultado
 
 
-def iniciar_upload(link_pasta, fotografo="", categoria=None):
+def iniciar_upload(link_pasta, fotografo=""):
     """Enfileira o envio das fotos atuais. Retorna na hora; o envio roda em segundo plano,
     um job por vez (cada job usa 2 conexoes paralelas, como no app original)."""
     global _contador, _worker_ativo
@@ -236,14 +238,6 @@ def iniciar_upload(link_pasta, fotografo="", categoria=None):
             folder_id = 'root'
         else:
             destino_nome = f"a pasta '{meta.get('name')}'"
-
-    if categoria and folder_id != 'root':
-        nome_sub = core.nome_pasta_categoria(categoria)
-        try:
-            folder_id = _pasta_filha(build('drive', 'v3', credentials=creds), nome_sub, folder_id)
-        except Exception as e:
-            raise RuntimeError(f"Não foi possível preparar a pasta '{nome_sub}' no Drive: {e}")
-        destino_nome = f"{destino_nome} › '{nome_sub}'"
 
     arquivos = list(E.arquivos_transferidos)  # copia: o proximo fotografo pode trocar a lista global
     with _lock_fila:

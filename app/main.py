@@ -143,10 +143,36 @@ def criar_pastas_drive(sid: str):
             if not any(drive.extrair_id_pasta(d.get("link")) != "root" for d in s.get("drive_folders", [])):
                 erro("Este Servir não tem pasta do Drive configurada.")
             try:
-                return {"resultado": drive.criar_pastas_categorias(s)}
+                resultado = drive.criar_pastas_categorias(s)
             except RuntimeError as e:
                 erro(str(e), 502)
+            return {"resultado": resultado, "servir": _registrar_pastas_drive(sid, resultado)}
     erro("Servir não encontrado.", 404)
+
+
+def _registrar_pastas_drive(sid, resultado):
+    """Salva as pastas criadas no Drive em 'Pastas do Google Drive' do Servir (nome + link), para o voluntario
+    escolher o destino do envio. As de dias anteriores (criadas automaticamente) saem da lista."""
+    dias = core.carregar_dias()
+    for d in dias:
+        if d.get("id") != sid:
+            continue
+        hoje = core.hoje()
+        pastas = [f for f in d.get("drive_folders", []) if not (f.get("auto") and f.get("data") != hoje)]
+        links = {f.get("link") for f in pastas}
+        for r in resultado:
+            if not r.get("ok"):
+                continue
+            link = f"https://drive.google.com/drive/folders/{r['id']}"
+            if link not in links:
+                links.add(link)
+                pastas.append({"link": link, "nome": r["pasta"], "auto": True, "categoria": r["categoria"], "data": hoje})
+        d["drive_folders"] = pastas
+        core.salvar_dias(dias)
+        if E.active_servir and E.active_servir.get("id") == sid:
+            E.active_servir = d
+        return d
+    return None
 
 
 @app.post("/api/avulso")
@@ -375,13 +401,7 @@ def revisor_abrir_pasta(d: dict = Body(default={})):
 @app.post("/api/upload/iniciar")
 def upload_iniciar(d: dict = Body(default={})):
     try:
-        sv = E.active_servir
-        # com a opcao ligada no Servir, as fotos vao para a pasta da categoria dentro da pasta base do Drive
-        cat = None
-        if sv and sv.get("drive_criar_categorias") and E.ultima_categoria != "Raiz (Nenhuma)" \
-                and d.get("link") in [f.get("link") for f in sv.get("drive_folders", [])]:
-            cat = E.ultima_categoria
-        return drive.iniciar_upload(d.get("link", ""), E.sessao_fotografo or "", cat)
+        return drive.iniciar_upload(d.get("link", ""), E.sessao_fotografo or "")
     except RuntimeError as e:
         erro(str(e))
 

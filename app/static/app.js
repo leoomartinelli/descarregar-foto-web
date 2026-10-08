@@ -89,7 +89,7 @@ async function criarPastasDriveAuto(sv) {
   try {
     const r = (await api(`/api/servir/${sv.id}/drive-pastas`, { body: {} })).resultado, falhas = r.filter(x => !x.ok);
     if (falhas.length) toast(`⚠️ Drive: ${falhas.length} de ${r.length} pastas com erro (${falhas[0].erro})`, true);
-    else toast(`☁️ ${[...new Set(r.map(x => x.pasta))].length} pasta(s) de categoria prontas no Drive`);
+    else toast(`☁️ ${[...new Set(r.map(x => x.pasta))].length} pasta(s) criadas no Drive e salvas em "Pastas do Google Drive" do Servir`);
   } catch (e) { toast('⚠️ Pastas no Drive: ' + e.message, true); }
 }
 
@@ -184,8 +184,8 @@ async function vHome() {
      <div class="chips">${f.pastas.map((v, i) => `<span class="chip">${esc(v)} <b data-rp="${i}">✕</b></span>`).join('') || '<span class="mut mini">Nenhuma pasta</span>'}</div>
      <label>Pastas do Google Drive (opcional)</label>
      <div class="row"><input type="text" id="f-dl" placeholder="Link da pasta do Drive"><input type="text" id="f-dn" placeholder="Nome (opcional)"><button class="fix" id="a-dr">Adicionar</button></div>
-     ${f.drives.map((d, i) => `<div class="item"><span class="t">☁️ ${esc(d.nome)}<br><span class="mut mini">${esc(d.link)}</span></span><button class="verm pq" data-rd="${i}">Remover</button></div>`).join('')}
-     <label style="font-weight:400;display:flex;gap:8px;align-items:flex-start;margin-top:10px"><input type="checkbox" id="f-cdrive" style="margin-top:4px" ${f.criarDrive ? 'checked' : ''}><span>Usar a pasta do Drive como <b>pasta base</b>: criar nela, <b>automaticamente ao iniciar o Servir</b>, as pastas de categoria (com a data de hoje) e enviar as fotos de cada categoria para a sua pasta</span></label>
+     ${f.drives.map((d, i) => `<div class="item"><span class="t">☁️ ${esc(d.nome)}${d.auto ? ' <span class="chip mini">criada automaticamente</span>' : ''}<br><span class="mut mini">${esc(d.link)}</span></span><button class="verm pq" data-rd="${i}">Remover</button></div>`).join('')}
+     <label style="font-weight:400;display:flex;gap:8px;align-items:flex-start;margin-top:10px"><input type="checkbox" id="f-cdrive" style="margin-top:4px" ${f.criarDrive ? 'checked' : ''}><span>Usar a pasta do Drive como <b>pasta base</b>: criar nela, <b>automaticamente ao iniciar o Servir</b>, as pastas de categoria (com a data de hoje) e adicioná-las às pastas do Drive do Servir, para escolher o destino ao enviar as fotos</span></label>
      <label>Pasta local do evento (opcional)</label>
      <div class="row"><input type="text" id="f-local" value="${esc(f.local)}" placeholder="Padrão: pasta do aplicativo"><button class="fix cinza" id="p-local">Procurar</button></div>
      <div style="margin-top:14px" class="row"><button class="verde grande" id="b-salvar">${editando ? '💾 Salvar Alterações' : '🚀 Criar e Ativar Novo Servir'}</button>${editando ? '<button class="cinza grande fix" id="b-canc" style="width:auto">Cancelar</button>' : ''}</div>
@@ -279,6 +279,9 @@ async function vDescarregar() {
   dfs.forEach(d => optsDrive.push({ r: 'Pasta do Servir: ' + d.nome, l: d.link }));
   optsDrive.push({ r: 'Raiz do Google Drive (Padrão)', l: '' }); st.pastas_drive.forEach(p => optsDrive.push({ r: p.nome, l: p.link }));
   if (!S.sel.drive || !optsDrive.some(o => o.r === S.sel.drive)) S.sel.drive = optsDrive[0].r;
+  if (sv && W.step === 5 && !S.sel.driveManual && S.sel.cat && S.sel.cat !== 'Raiz (Nenhuma)') {   // sugere a pasta do Drive da categoria usada
+    const sug = optsDrive.map(o => o.r).filter(r => r.startsWith(`Pasta do Servir: ${S.sel.cat} `)).sort().pop(); if (sug) S.sel.drive = sug;
+  }
   const cats = sv ? [...(sv.pastas_predefinidas || []), 'Raiz (Nenhuma)'] : [];
   if (sv) { if (!cats.includes(S.sel.cat)) S.sel.cat = cats[0]; if (!sv.voluntarios.includes(S.sel.fot) && S.sel.fot !== 'Outro...') S.sel.fot = sv.voluntarios[0]; }
   if (S.sel.sub === undefined) S.sel.sub = true;
@@ -431,8 +434,8 @@ async function vDescarregar() {
   if (W.step === 5) {
     q('#b-sel').onclick = abrirRevisor;
     q('#b-abrir').onclick = () => api('/api/revisor/abrir-pasta', { body: {} }).catch(e => toast(e.message, true));
-    q('#b-novo').onclick = async () => { await api('/api/transferencia/nova', { body: {} }); S.sel.nome = ''; S.sel.outro = ''; W.step = 1; W.pastas = []; S.oChave = null; await carregar(); vDescarregar(); };
-    q('#s-drive').onchange = e => { S.sel.drive = e.target.value; };
+    q('#b-novo').onclick = async () => { await api('/api/transferencia/nova', { body: {} }); S.sel.nome = ''; S.sel.outro = ''; S.sel.driveManual = false; W.step = 1; W.pastas = []; S.oChave = null; await carregar(); vDescarregar(); };
+    q('#s-drive').onchange = e => { S.sel.drive = e.target.value; S.sel.driveManual = true; };
     q('#b-up').onclick = async () => {
       const o = optsDrive.find(x => x.r === S.sel.drive);
       try { await api('/api/upload/iniciar', { body: { link: o ? o.l : '' } }); toast('Envio ao Drive iniciado em segundo plano.'); uploadsAtualiza(); } catch (e) { alerta('Upload', e.message); }
