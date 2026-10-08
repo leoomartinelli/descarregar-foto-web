@@ -175,6 +175,7 @@ def iniciar(fotografo, destino_base, pastas, categoria, criar_subpasta, modo):
     if not arquivos:
         raise RuntimeError("Nenhuma imagem encontrada nas pastas selecionadas.")
     E.arquivos_transferidos = []
+    E.ultima_categoria = categoria
     E.transfer = {"estado": "rodando", "progresso": 0, "total": len(arquivos), "feitos": 0,
                   "msg": "Copiando...", "destino": destino}
     threading.Thread(target=_copiar, args=(fotografo, destino, base_fotografo, arquivos), daemon=True).start()

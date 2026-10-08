@@ -83,7 +83,7 @@ async function render() {
 }
 
 // ---------- HOME ----------
-function formVazio() { return { nome: '', voluntarios: [], pastas: [], drives: [], local: '' }; }
+function formVazio() { return { nome: '', voluntarios: [], pastas: [], drives: [], local: '', criarDrive: false }; }
 async function vHome() {
   const st = S.st; S.entrou = false; S.avulso = false;
   if (!S.form) S.form = formVazio();
@@ -104,6 +104,7 @@ async function vHome() {
      <label>Pastas do Google Drive (opcional)</label>
      <div class="row"><input type="text" id="f-dl" placeholder="Link da pasta do Drive"><input type="text" id="f-dn" placeholder="Nome (opcional)"><button class="fix" id="a-dr">Adicionar</button></div>
      ${f.drives.map((d, i) => `<div class="item"><span class="t">☁️ ${esc(d.nome)}<br><span class="mut mini">${esc(d.link)}</span></span><button class="verm pq" data-rd="${i}">Remover</button></div>`).join('')}
+     <label style="font-weight:400;display:flex;gap:8px;align-items:flex-start;margin-top:10px"><input type="checkbox" id="f-cdrive" style="margin-top:4px" ${f.criarDrive ? 'checked' : ''}><span>Usar a pasta do Drive como <b>pasta base</b>: criar nela as pastas de categoria (com a data de hoje) e enviar as fotos de cada categoria para a sua pasta</span></label>
      <label>Pasta local do evento (opcional)</label>
      <div class="row"><input type="text" id="f-local" value="${esc(f.local)}" placeholder="Padrão: pasta do aplicativo"><button class="fix cinza" id="p-local">Procurar</button></div>
      <div style="margin-top:14px" class="row"><button class="verde grande" id="b-salvar">${editando ? '💾 Salvar Alterações' : '🚀 Criar e Ativar Novo Servir'}</button>${editando ? '<button class="cinza grande fix" id="b-canc" style="width:auto">Cancelar</button>' : ''}</div>
@@ -122,7 +123,7 @@ async function vHome() {
         : '<p class="warn">🔍 Procurando Líder na rede local...</p>')}
     </div></div></div></div>`;
   const q = s => $app.querySelector(s), qa = s => $app.querySelectorAll(s);
-  const ler = () => { f.nome = q('#f-nome').value; f.local = q('#f-local').value; };
+  const ler = () => { f.nome = q('#f-nome').value; f.local = q('#f-local').value; f.criarDrive = q('#f-cdrive').checked; };
   qa('[data-go]').forEach(b => b.onclick = () => ir(b.dataset.go));
   q('#a-vol').onclick = () => { ler(); const v = q('#f-vol').value.trim(); if (v && !f.voluntarios.includes(v)) f.voluntarios.push(v); vHome(); };
   q('#f-vol').onkeydown = e => { if (e.key === 'Enter') q('#a-vol').click(); };
@@ -140,17 +141,29 @@ async function vHome() {
   q('#b-salvar').onclick = async () => {
     ler(); const pend = q('#f-dl').value.trim();
     if (pend && !f.drives.some(d => d.link === pend)) f.drives.push({ link: pend, nome: q('#f-dn').value.trim() || 'Pasta do Google Drive' });
-    const body = { nome: f.nome, voluntarios: f.voluntarios, pastas_predefinidas: f.pastas, drive_folders: f.drives, local_path: f.local };
+    const body = { nome: f.nome, voluntarios: f.voluntarios, pastas_predefinidas: f.pastas, drive_folders: f.drives, local_path: f.local, drive_criar_categorias: f.criarDrive };
     try {
-      if (editando) { await api('/api/servir/' + S.editId, { method: 'PUT', body }); toast('Dia do Servir editado com sucesso!'); S.editId = null; S.form = formVazio(); vHome(); }
-      else { await api('/api/servir', { body }); S.form = formVazio(); S.entrou = true; ir('descarregar'); }
+      const querDrive = f.criarDrive && f.drives.length && f.pastas.length;
+      if (f.criarDrive && !querDrive) toast('Para criar as pastas no Drive, informe a pasta do Drive e ao menos uma pasta de categoria.', true);
+      const sv = editando ? await api('/api/servir/' + S.editId, { method: 'PUT', body }) : await api('/api/servir', { body });
+      if (querDrive && await confirmar('Criar pastas no Google Drive',
+        `Deseja criar no Google Drive as pastas de categoria abaixo (cada uma com a data de hoje no nome)?\n\nCategorias: ${f.pastas.join(', ')}\n\nDentro de:\n${f.drives.map(d => '• ' + d.nome).join('\n')}`, 'Criar pastas', 'Agora não')) {
+        try {
+          const r = (await api(`/api/servir/${sv.id}/drive-pastas`, { body: {} })).resultado, falhas = r.filter(x => !x.ok);
+          await alerta(falhas.length ? 'Pastas criadas com avisos' : 'Pastas criadas no Drive', falhas.length
+            ? `${r.length - falhas.length} de ${r.length} pastas prontas.\nCom erro:\n${falhas.map(x => `• ${x.pasta}: ${x.erro}`).join('\n')}`
+            : `${r.length} pasta(s) prontas no Drive:\n${[...new Set(r.map(x => x.pasta))].join(', ')}`);
+        } catch (e) { await alerta('Pastas no Drive', e.message + '\n\nO Servir foi criado normalmente. Corrija o login do Google e use "Editar" para tentar de novo.'); }
+      }
+      if (editando) { toast('Dia do Servir editado com sucesso!'); S.editId = null; S.form = formVazio(); vHome(); }
+      else { S.form = formVazio(); S.entrou = true; ir('descarregar'); }
     } catch (e) { toast(e.message, true); }
   };
   if (editando) q('#b-canc').onclick = () => { S.editId = null; S.form = formVazio(); vHome(); };
   qa('[data-at]').forEach(b => b.onclick = async () => { try { await api('/api/servir/' + b.dataset.at + '/ativar', { body: {} }); S.entrou = true; ir('descarregar'); } catch (e) { toast(e.message, true); } });
   qa('[data-ed]').forEach(b => b.onclick = () => {
     const d = dias.find(x => x.id === b.dataset.ed); S.editId = d.id;
-    S.form = { nome: d.nome, voluntarios: [...d.voluntarios], pastas: [...(d.pastas_predefinidas || [])], drives: JSON.parse(JSON.stringify(d.drive_folders || [])), local: d.local_path || '' };
+    S.form = { nome: d.nome, voluntarios: [...d.voluntarios], pastas: [...(d.pastas_predefinidas || [])], drives: JSON.parse(JSON.stringify(d.drive_folders || [])), local: d.local_path || '', criarDrive: !!d.drive_criar_categorias };
     vHome(); window.scrollTo(0, 0);
   });
   qa('[data-ex]').forEach(b => b.onclick = async () => {

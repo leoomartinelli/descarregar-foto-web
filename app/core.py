@@ -65,6 +65,7 @@ class Estado:
         self.arquivos_transferidos = []
         self.sessao_fotografo = None
         self.sessao_destino = None
+        self.ultima_categoria = "Raiz (Nenhuma)"  # categoria da ultima transferencia (decide a pasta no Drive)
         # rede local
         self.network_mode = "lider"
         self.local_port = int(os.environ.get("PORT", 50007))

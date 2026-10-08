@@ -173,7 +173,43 @@ _lock_fila = threading.Lock()
 _contador = 0
 
 
-def iniciar_upload(link_pasta, fotografo=""):
+def _pasta_filha(svc, nome, pai_id):
+    """Retorna o id da subpasta `nome` dentro de `pai_id`, criando-a se nao existir."""
+    nome_q = nome.replace("\\", "\\\\").replace("'", "\\'")
+    q = (f"name = '{nome_q}' and '{pai_id}' in parents and "
+         "mimeType = 'application/vnd.google-apps.folder' and trashed = false")
+    achadas = svc.files().list(q=q, fields='files(id)', pageSize=1).execute().get('files', [])
+    if achadas:
+        return achadas[0]['id']
+    meta = {'name': nome, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [pai_id]}
+    return svc.files().create(body=meta, fields='id').execute()['id']
+
+
+def criar_pastas_categorias(servir):
+    """Cria, dentro de cada pasta do Drive do Servir, uma pasta por categoria ('Voltz 2026-10-08').
+    Retorna uma lista com o resultado de cada pasta (ja existentes sao reaproveitadas)."""
+    if not DISPONIVEL:
+        raise RuntimeError("Bibliotecas da API do Google não estão instaladas.")
+    creds = _credenciais()
+    if not creds:
+        raise RuntimeError("Você não está logado no Google. Faça o login na tela 'Conta Google'.")
+    svc = build('drive', 'v3', credentials=creds)
+    resultado = []
+    for pasta in servir.get("drive_folders", []):
+        base = extrair_id_pasta(pasta.get("link"))
+        if base == 'root':
+            continue  # nunca cria categorias soltas na raiz do Drive
+        for cat in servir.get("pastas_predefinidas", []):
+            nome = core.nome_pasta_categoria(cat)
+            try:
+                _pasta_filha(svc, nome, base)
+                resultado.append({"base": pasta.get("nome"), "pasta": nome, "ok": True})
+            except Exception as e:
+                resultado.append({"base": pasta.get("nome"), "pasta": nome, "ok": False, "erro": str(e)})
+    return resultado
+
+
+def iniciar_upload(link_pasta, fotografo="", categoria=None):
     """Enfileira o envio das fotos atuais. Retorna na hora; o envio roda em segundo plano,
     um job por vez (cada job usa 2 conexoes paralelas, como no app original)."""
     global _contador, _worker_ativo
@@ -200,6 +236,14 @@ def iniciar_upload(link_pasta, fotografo=""):
             folder_id = 'root'
         else:
             destino_nome = f"a pasta '{meta.get('name')}'"
+
+    if categoria and folder_id != 'root':
+        nome_sub = core.nome_pasta_categoria(categoria)
+        try:
+            folder_id = _pasta_filha(build('drive', 'v3', credentials=creds), nome_sub, folder_id)
+        except Exception as e:
+            raise RuntimeError(f"Não foi possível preparar a pasta '{nome_sub}' no Drive: {e}")
+        destino_nome = f"{destino_nome} › '{nome_sub}'"
 
     arquivos = list(E.arquivos_transferidos)  # copia: o proximo fotografo pode trocar a lista global
     with _lock_fila:
