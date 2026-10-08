@@ -95,3 +95,23 @@ progress{width:100%;height:16px;margin-top:8px}
 .pd-c{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:2px 12px;margin:6px 0 2px 26px}
 .pd-c label{font-weight:400;margin:3px 0;display:flex;gap:8px;align-items:center}
 #pd-corpo .pd-h{margin-bottom:2px}
+/* checkbox personalizado (vale para todo o app) */
+input[type=checkbox]{-webkit-appearance:none;appearance:none;flex:none;width:21px;height:21px;margin:0;display:inline-grid;place-content:center;cursor:pointer;
+ background:var(--card2);border:2px solid #7a7a85;border-radius:7px;transition:background .15s,border-color .15s,box-shadow .15s,transform .1s}
+input[type=checkbox]:hover:not(:disabled){border-color:var(--azul);box-shadow:0 0 0 4px #1f6aa52e}
+input[type=checkbox]:active:not(:disabled){transform:scale(.92)}
+input[type=checkbox]:focus-visible{outline:2px solid var(--azul);outline-offset:2px}
+input[type=checkbox]::before{content:"";width:10px;height:5px;border-left:2.5px solid #fff;border-bottom:2.5px solid #fff;
+ transform:translateY(-1px) rotate(-45deg) scale(0);transition:transform .14s cubic-bezier(.3,1.6,.5,1)}
+input[type=checkbox]:checked,input[type=checkbox]:indeterminate{background:var(--azul);border-color:var(--azul)}
+input[type=checkbox]:checked::before{transform:translateY(-1px) rotate(-45deg) scale(1)}
+input[type=checkbox]:indeterminate::before{width:10px;height:0;border-left:0;transform:none}
+input[type=checkbox]:disabled{opacity:.45;cursor:not-allowed}
+input[type=checkbox]:checked:disabled{background:var(--verde);border-color:var(--verde);opacity:.7}
+/* predefinicoes: grupo selecionado ganha destaque e cada pasta vira uma "pilula" clicavel */
+.pd{transition:border-color .15s,background .15s}
+.pd:has([data-p]:checked),.pd:has([data-p]:indeterminate){border-color:var(--azul);background:#1f6aa514}
+.pd-c label{padding:5px 10px;border-radius:9px;cursor:pointer;transition:background .12s}
+.pd-c label:hover{background:#1f6aa522}
+.pd-c label:has(input:disabled){cursor:default}.pd-c label:has(input:disabled):hover{background:none}
+.pd-h label{cursor:pointer}
