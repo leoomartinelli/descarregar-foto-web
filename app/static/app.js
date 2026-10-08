@@ -79,7 +79,7 @@ async function render() {
     await alerta('Servir Finalizado', 'O computador Líder finalizou o Dia de Servir.\nSua estação foi desconectada automaticamente.'); S.view = 'home';
   }
   if (S.view === 'home' && (S.st.active_servir || S.avulso) && S.entrou) S.view = 'descarregar';
-  ({ home: vHome, descarregar: vDescarregar, historico: vHistorico, drive: vDrive, google: vGoogle }[S.view] || vHome)();
+  ({ home: vHome, descarregar: vDescarregar, historico: vHistorico, drive: vDrive, google: vGoogle, predef: vPredef }[S.view] || vHome)();
 }
 
 // cria no Drive as pastas de categoria do Servir (com a data de hoje) assim que ele comeca; nao bloqueia a tela
@@ -93,61 +93,74 @@ async function criarPastasDriveAuto(sv) {
   } catch (e) { toast('⚠️ Pastas no Drive: ' + e.message, true); }
 }
 
-// ---------- predefinicoes de categorias ----------
+// ---------- predefinicoes de categorias: janela so de SELECAO (o cadastro fica na tela "Predefinições") ----------
 async function abrirPredefinicoes(jaTem) {
   let lista; try { lista = await api('/api/predefinicoes'); } catch (e) { toast(e.message, true); return null; }
   return new Promise(res => {
     const bg = document.createElement('div'); bg.className = 'modal-bg';
     bg.innerHTML = `<div class="modal larga"><h2>📋 Predefinições de categorias</h2><p class="mut mini">Marque o grupo para selecionar todas as pastas dele; clique numa pasta para tirá-la da seleção.</p>
-      <div id="pd-corpo"></div><div class="btns" id="pd-btns"></div></div>`;
+      <div id="pd-corpo"></div><div class="btns"><button class="cinza" id="pd-x">Cancelar</button><button class="verde" id="pd-ok" disabled>Adicionar selecionadas</button></div></div>`;
     $modal.appendChild(bg);
-    let sel = lista.map(() => new Set()), ed = null;
-    const corpo = bg.querySelector('#pd-corpo'), btns = bg.querySelector('#pd-btns');
-    const salvar = async nova => { try { lista = await api('/api/predefinicoes', { method: 'PUT', body: nova }); sel = lista.map(() => new Set()); return true; } catch (e) { toast(e.message, true); return false; } };
+    const sel = lista.map(() => new Set()), corpo = bg.querySelector('#pd-corpo'), ok = bg.querySelector('#pd-ok');
     function desenha() {
-      if (ed) {
-        corpo.innerHTML = `<h3>${ed.i === null ? 'Nova predefinição' : 'Editar predefinição'}</h3><label>Título</label><input type="text" id="pd-t" value="${esc(ed.titulo)}" placeholder="Ex.: ELEVE">
-          <label>Nomes das pastas</label><div class="row"><input type="text" id="pd-n" placeholder="Nome da pasta"><button class="fix" id="pd-add">Adicionar</button></div>
-          <div class="chips">${ed.pastas.map((n, k) => `<span class="chip">${esc(n)} <b data-r="${k}">✕</b></span>`).join('') || '<span class="mut mini">Nenhuma pasta</span>'}</div>`;
-        btns.innerHTML = '<button class="cinza" id="pd-cancel">Cancelar</button><button class="verde" id="pd-save">Salvar predefinição</button>';
-        const add = () => { ed.titulo = corpo.querySelector('#pd-t').value; const v = corpo.querySelector('#pd-n').value.trim(); if (v && !ed.pastas.includes(v)) ed.pastas.push(v); desenha(); corpo.querySelector('#pd-n').focus(); };
-        corpo.querySelector('#pd-add').onclick = add; corpo.querySelector('#pd-n').onkeydown = e => { if (e.key === 'Enter') add(); };
-        corpo.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { ed.titulo = corpo.querySelector('#pd-t').value; ed.pastas.splice(+b.dataset.r, 1); desenha(); });
-        bg.querySelector('#pd-cancel').onclick = () => { ed = null; desenha(); };
-        bg.querySelector('#pd-save').onclick = async () => {
-          ed.titulo = corpo.querySelector('#pd-t').value; const pend = corpo.querySelector('#pd-n').value.trim(); if (pend && !ed.pastas.includes(pend)) ed.pastas.push(pend);
-          const nova = lista.map(p => ({ ...p })); const item = { titulo: ed.titulo.trim(), pastas: ed.pastas };
-          if (ed.i === null) nova.push(item); else nova[ed.i] = item;
-          if (await salvar(nova)) { ed = null; desenha(); }
-        };
-        return;
-      }
       corpo.innerHTML = lista.map((p, i) => {
         const livres = p.pastas.filter(n => !jaTem.includes(n)), marc = livres.filter(n => sel[i].has(n)).length;
-        return `<div class="pd"><div class="pd-h"><label><input type="checkbox" data-p="${i}" ${livres.length && marc === livres.length ? 'checked' : ''} ${livres.length ? '' : 'disabled'}> <b>${esc(p.titulo)}</b></label>
-          <span><button class="pq cinza" data-e="${i}">Editar</button> <button class="pq verm" data-x="${i}">Excluir</button></span></div>
+        return `<div class="pd"><div class="pd-h"><label><input type="checkbox" data-p="${i}" ${livres.length && marc === livres.length ? 'checked' : ''} ${livres.length ? '' : 'disabled'}> <b>${esc(p.titulo)}</b></label></div>
           <div class="pd-c">${p.pastas.map(n => jaTem.includes(n) ? `<label class="mut"><input type="checkbox" checked disabled> ${esc(n)} <small>(já adicionada)</small></label>`
             : `<label><input type="checkbox" data-c="${i}|${esc(n)}" ${sel[i].has(n) ? 'checked' : ''}> ${esc(n)}</label>`).join('')}</div></div>`;
-      }).join('') || '<p class="mut">Nenhuma predefinição criada.</p>';
+      }).join('') || '<p class="mut">Nenhuma predefinição criada. Use o botão "📋 Predefinições" do menu superior para criar.</p>';
       corpo.querySelectorAll('[data-p]').forEach(cb => {
         const i = +cb.dataset.p, livres = lista[i].pastas.filter(n => !jaTem.includes(n)), marc = livres.filter(n => sel[i].has(n)).length;
         cb.indeterminate = marc > 0 && marc < livres.length;
         cb.onchange = () => { sel[i] = new Set(cb.checked ? livres : []); desenha(); };
       });
       corpo.querySelectorAll('[data-c]').forEach(cb => cb.onchange = () => { const [i, n] = cb.dataset.c.split('|'); cb.checked ? sel[+i].add(n) : sel[+i].delete(n); desenha(); });
-      corpo.querySelectorAll('[data-e]').forEach(b => b.onclick = () => { const p = lista[+b.dataset.e]; ed = { i: +b.dataset.e, titulo: p.titulo, pastas: [...p.pastas] }; desenha(); });
-      corpo.querySelectorAll('[data-x]').forEach(b => b.onclick = async () => {
-        const p = lista[+b.dataset.x]; if (!await confirmar('Excluir predefinição', `Excluir a predefinição "${p.titulo}"?\n\nIsso não apaga nenhuma pasta já criada.`, 'Excluir', 'Cancelar')) return;
-        if (await salvar(lista.filter((_, k) => k !== +b.dataset.x))) desenha();
-      });
-      const total = new Set(sel.flatMap(s => [...s])).size;
-      btns.innerHTML = `<button class="cinza pq" id="pd-new" style="margin-right:auto">＋ Nova predefinição</button><button class="cinza" id="pd-x">Cancelar</button><button class="verde" id="pd-ok" ${total ? '' : 'disabled'}>Adicionar ${total ? total + ' ' : ''}selecionada(s)</button>`;
-      bg.querySelector('#pd-new').onclick = () => { ed = { i: null, titulo: '', pastas: [] }; desenha(); };
-      bg.querySelector('#pd-x').onclick = () => { bg.remove(); res(null); };
-      bg.querySelector('#pd-ok').onclick = () => { const r = [...new Set(sel.flatMap(s => [...s]))]; bg.remove(); res(r); };
+      const total = new Set(sel.flatMap(x => [...x])).size;
+      ok.disabled = !total; ok.textContent = total ? `Adicionar ${total} selecionada(s)` : 'Adicionar selecionadas';
     }
+    bg.querySelector('#pd-x').onclick = () => { bg.remove(); res(null); };
+    ok.onclick = () => { const r = [...new Set(sel.flatMap(x => [...x]))]; bg.remove(); res(r); };
     desenha();
   });
+}
+
+// ---------- tela de cadastro das predefinicoes (criar, editar, excluir) ----------
+async function vPredef(cache) {
+  // `cache`: lista ja carregada (redesenhos de edicao nao precisam buscar no servidor de novo)
+  let lista = cache; if (!lista) { try { lista = await api('/api/predefinicoes'); } catch (e) { return alerta('Erro', e.message); } }
+  const ed = S.pdEd || null;
+  const salvar = async nova => { try { await api('/api/predefinicoes', { method: 'PUT', body: nova }); return true; } catch (e) { toast(e.message, true); return false; } };
+  $app.innerHTML = `<div class="wrap" style="max-width:760px"><div class="topbar"><h1>📋 Predefinições de categorias</h1><div class="acts"><button class="cinza" id="pr-v">⬅ Voltar</button></div></div>
+  <p class="mut">Uma predefinição é um grupo de pastas de categoria (ex.: <b>ELEVE</b> → Voltz, Bold, Burn, A3). No painel inicial, o botão "📋 Predefinições" ao lado das categorias permite escolher quais usar.</p>
+  ${ed ? `<div class="card"><h2>${ed.i === null ? 'Nova predefinição' : 'Editar predefinição'}</h2>
+     <label>Título</label><input type="text" id="pd-t" value="${esc(ed.titulo)}" placeholder="Ex.: ELEVE">
+     <label>Nomes das pastas</label><div class="row"><input type="text" id="pd-n" placeholder="Nome da pasta"><button class="fix" id="pd-add">Adicionar</button></div>
+     <div class="chips">${ed.pastas.map((n, k) => `<span class="chip">${esc(n)} <b data-r="${k}">✕</b></span>`).join('') || '<span class="mut mini">Nenhuma pasta</span>'}</div>
+     <div class="nav"><button class="cinza" id="pd-cancel">Cancelar</button><button class="verde" id="pd-save">💾 Salvar predefinição</button></div></div>`
+  : `${lista.map((p, i) => `<div class="pd"><div class="pd-h"><b>${esc(p.titulo)}</b><span><button class="pq cinza" data-e="${i}">Editar</button> <button class="pq verm" data-x="${i}">Excluir</button></span></div>
+      <div class="chips">${p.pastas.map(n => `<span class="chip">${esc(n)}</span>`).join('')}</div></div>`).join('') || '<p class="mut">Nenhuma predefinição criada.</p>'}
+     <button class="verde grande" id="pd-new" style="margin-top:12px">＋ Nova predefinição</button>`}</div>`;
+  const q = x => $app.querySelector(x);
+  q('#pr-v').onclick = () => { S.pdEd = null; ir('home'); };
+  if (ed) {
+    const add = () => { ed.titulo = q('#pd-t').value; const v = q('#pd-n').value.trim(); if (v && !ed.pastas.includes(v)) ed.pastas.push(v); vPredef(lista); };
+    q('#pd-add').onclick = add; q('#pd-n').onkeydown = e => { if (e.key === 'Enter') add(); };
+    $app.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { ed.titulo = q('#pd-t').value; ed.pastas.splice(+b.dataset.r, 1); vPredef(lista); });
+    q('#pd-cancel').onclick = () => { S.pdEd = null; vPredef(lista); };
+    q('#pd-save').onclick = async () => {
+      ed.titulo = q('#pd-t').value; const pend = q('#pd-n').value.trim(); if (pend && !ed.pastas.includes(pend)) ed.pastas.push(pend);
+      const nova = lista.map(x => ({ ...x })), item = { titulo: ed.titulo.trim(), pastas: ed.pastas };
+      if (ed.i === null) nova.push(item); else nova[ed.i] = item;
+      if (await salvar(nova)) { S.pdEd = null; toast('Predefinição salva!'); vPredef(); }
+    };
+  } else {
+    q('#pd-new').onclick = () => { S.pdEd = { i: null, titulo: '', pastas: [] }; vPredef(lista); };
+    $app.querySelectorAll('[data-e]').forEach(b => b.onclick = () => { const p = lista[+b.dataset.e]; S.pdEd = { i: +b.dataset.e, titulo: p.titulo, pastas: [...p.pastas] }; vPredef(lista); });
+    $app.querySelectorAll('[data-x]').forEach(b => b.onclick = async () => {
+      const p = lista[+b.dataset.x];
+      if (await confirmar('Excluir predefinição', `Excluir a predefinição "${p.titulo}"?\n\nIsso não apaga nenhuma pasta já criada.`, 'Excluir', 'Cancelar') && await salvar(lista.filter((_, k) => k !== +b.dataset.x))) vPredef();
+    });
+  }
 }
 
 // ---------- HOME ----------
@@ -159,7 +172,7 @@ async function vHome() {
   const r = st.rede;
   $app.innerHTML = `<div class="wrap">
   <div class="topbar"><h1>📸 Descarregador de Fotos — Painel Inicial</h1>
-   <div class="acts"><button data-go="google">🔑 Login Google</button><button data-go="historico">📊 Histórico</button><button data-go="drive">⚙️ Config Drive</button></div></div>
+   <div class="acts"><button data-go="google">🔑 Login Google</button><button data-go="predef">📋 Predefinições</button><button data-go="historico">📊 Histórico</button><button data-go="drive">⚙️ Config Drive</button></div></div>
   <div class="grid"><div>
     <div class="card"><h2 class="${editando ? 'warn' : 'ok'}">${editando ? '✏️ Editando Dia do Servir' : 'Criar Novo Dia do Servir'}</h2>
      <label>Nome do Servir</label><input type="text" id="f-nome" value="${esc(f.nome)}" placeholder="Ex.: Culto de Domingo">

@@ -94,3 +94,4 @@ progress{width:100%;height:16px;margin-top:8px}
 .pd-h label{margin:0;display:flex;gap:8px;align-items:center;font-size:1.05rem}
 .pd-c{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:2px 12px;margin:6px 0 2px 26px}
 .pd-c label{font-weight:400;margin:3px 0;display:flex;gap:8px;align-items:center}
+#pd-corpo .pd-h{margin-bottom:2px}
