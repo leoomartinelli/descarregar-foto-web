@@ -163,6 +163,39 @@ def finalizar_servir(dados: dict = Body(default={})):
         erro(str(e), 502)
 
 
+# ======================= predefinicoes de categorias =======================
+
+PRED_PADRAO = [{"titulo": "ELEVE", "pastas": ["Voltz", "Bold", "Burn", "A3"]}]
+
+
+@app.get("/api/predefinicoes")
+def listar_predefinicoes():
+    dados = core.ler_json(core.PATH_PRED, None)
+    if not isinstance(dados, list):
+        dados = PRED_PADRAO  # primeira vez: exemplo para o usuario editar ou excluir
+        core.gravar_json(core.PATH_PRED, dados)
+    return dados
+
+
+@app.put("/api/predefinicoes")
+def salvar_predefinicoes(dados: list = Body(...)):
+    limpo = []
+    for p in dados:
+        titulo = (p.get("titulo") or "").strip()
+        pastas = []
+        for n in p.get("pastas", []):
+            n = (n or "").strip()
+            if n and not core.nome_valido(n):
+                erro(f"O nome de pasta '{n}' não pode conter / \\ : * ? \" < > |")
+            if n and n not in pastas:
+                pastas.append(n)
+        if not titulo or not pastas:
+            erro("Cada predefinição precisa de um título e de pelo menos uma pasta.")
+        limpo.append({"titulo": titulo, "pastas": pastas})
+    core.gravar_json(core.PATH_PRED, limpo)
+    return limpo
+
+
 # ======================= configuracao de pastas (Drive e locais) =======================
 
 @app.get("/api/config")

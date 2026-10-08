@@ -93,6 +93,63 @@ async function criarPastasDriveAuto(sv) {
   } catch (e) { toast('⚠️ Pastas no Drive: ' + e.message, true); }
 }
 
+// ---------- predefinicoes de categorias ----------
+async function abrirPredefinicoes(jaTem) {
+  let lista; try { lista = await api('/api/predefinicoes'); } catch (e) { toast(e.message, true); return null; }
+  return new Promise(res => {
+    const bg = document.createElement('div'); bg.className = 'modal-bg';
+    bg.innerHTML = `<div class="modal larga"><h2>📋 Predefinições de categorias</h2><p class="mut mini">Marque o grupo para selecionar todas as pastas dele; clique numa pasta para tirá-la da seleção.</p>
+      <div id="pd-corpo"></div><div class="btns" id="pd-btns"></div></div>`;
+    $modal.appendChild(bg);
+    let sel = lista.map(() => new Set()), ed = null;
+    const corpo = bg.querySelector('#pd-corpo'), btns = bg.querySelector('#pd-btns');
+    const salvar = async nova => { try { lista = await api('/api/predefinicoes', { method: 'PUT', body: nova }); sel = lista.map(() => new Set()); return true; } catch (e) { toast(e.message, true); return false; } };
+    function desenha() {
+      if (ed) {
+        corpo.innerHTML = `<h3>${ed.i === null ? 'Nova predefinição' : 'Editar predefinição'}</h3><label>Título</label><input type="text" id="pd-t" value="${esc(ed.titulo)}" placeholder="Ex.: ELEVE">
+          <label>Nomes das pastas</label><div class="row"><input type="text" id="pd-n" placeholder="Nome da pasta"><button class="fix" id="pd-add">Adicionar</button></div>
+          <div class="chips">${ed.pastas.map((n, k) => `<span class="chip">${esc(n)} <b data-r="${k}">✕</b></span>`).join('') || '<span class="mut mini">Nenhuma pasta</span>'}</div>`;
+        btns.innerHTML = '<button class="cinza" id="pd-cancel">Cancelar</button><button class="verde" id="pd-save">Salvar predefinição</button>';
+        const add = () => { ed.titulo = corpo.querySelector('#pd-t').value; const v = corpo.querySelector('#pd-n').value.trim(); if (v && !ed.pastas.includes(v)) ed.pastas.push(v); desenha(); corpo.querySelector('#pd-n').focus(); };
+        corpo.querySelector('#pd-add').onclick = add; corpo.querySelector('#pd-n').onkeydown = e => { if (e.key === 'Enter') add(); };
+        corpo.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { ed.titulo = corpo.querySelector('#pd-t').value; ed.pastas.splice(+b.dataset.r, 1); desenha(); });
+        bg.querySelector('#pd-cancel').onclick = () => { ed = null; desenha(); };
+        bg.querySelector('#pd-save').onclick = async () => {
+          ed.titulo = corpo.querySelector('#pd-t').value; const pend = corpo.querySelector('#pd-n').value.trim(); if (pend && !ed.pastas.includes(pend)) ed.pastas.push(pend);
+          const nova = lista.map(p => ({ ...p })); const item = { titulo: ed.titulo.trim(), pastas: ed.pastas };
+          if (ed.i === null) nova.push(item); else nova[ed.i] = item;
+          if (await salvar(nova)) { ed = null; desenha(); }
+        };
+        return;
+      }
+      corpo.innerHTML = lista.map((p, i) => {
+        const livres = p.pastas.filter(n => !jaTem.includes(n)), marc = livres.filter(n => sel[i].has(n)).length;
+        return `<div class="pd"><div class="pd-h"><label><input type="checkbox" data-p="${i}" ${livres.length && marc === livres.length ? 'checked' : ''} ${livres.length ? '' : 'disabled'}> <b>${esc(p.titulo)}</b></label>
+          <span><button class="pq cinza" data-e="${i}">Editar</button> <button class="pq verm" data-x="${i}">Excluir</button></span></div>
+          <div class="pd-c">${p.pastas.map(n => jaTem.includes(n) ? `<label class="mut"><input type="checkbox" checked disabled> ${esc(n)} <small>(já adicionada)</small></label>`
+            : `<label><input type="checkbox" data-c="${i}|${esc(n)}" ${sel[i].has(n) ? 'checked' : ''}> ${esc(n)}</label>`).join('')}</div></div>`;
+      }).join('') || '<p class="mut">Nenhuma predefinição criada.</p>';
+      corpo.querySelectorAll('[data-p]').forEach(cb => {
+        const i = +cb.dataset.p, livres = lista[i].pastas.filter(n => !jaTem.includes(n)), marc = livres.filter(n => sel[i].has(n)).length;
+        cb.indeterminate = marc > 0 && marc < livres.length;
+        cb.onchange = () => { sel[i] = new Set(cb.checked ? livres : []); desenha(); };
+      });
+      corpo.querySelectorAll('[data-c]').forEach(cb => cb.onchange = () => { const [i, n] = cb.dataset.c.split('|'); cb.checked ? sel[+i].add(n) : sel[+i].delete(n); desenha(); });
+      corpo.querySelectorAll('[data-e]').forEach(b => b.onclick = () => { const p = lista[+b.dataset.e]; ed = { i: +b.dataset.e, titulo: p.titulo, pastas: [...p.pastas] }; desenha(); });
+      corpo.querySelectorAll('[data-x]').forEach(b => b.onclick = async () => {
+        const p = lista[+b.dataset.x]; if (!await confirmar('Excluir predefinição', `Excluir a predefinição "${p.titulo}"?\n\nIsso não apaga nenhuma pasta já criada.`, 'Excluir', 'Cancelar')) return;
+        if (await salvar(lista.filter((_, k) => k !== +b.dataset.x))) desenha();
+      });
+      const total = new Set(sel.flatMap(s => [...s])).size;
+      btns.innerHTML = `<button class="cinza pq" id="pd-new" style="margin-right:auto">＋ Nova predefinição</button><button class="cinza" id="pd-x">Cancelar</button><button class="verde" id="pd-ok" ${total ? '' : 'disabled'}>Adicionar ${total ? total + ' ' : ''}selecionada(s)</button>`;
+      bg.querySelector('#pd-new').onclick = () => { ed = { i: null, titulo: '', pastas: [] }; desenha(); };
+      bg.querySelector('#pd-x').onclick = () => { bg.remove(); res(null); };
+      bg.querySelector('#pd-ok').onclick = () => { const r = [...new Set(sel.flatMap(s => [...s]))]; bg.remove(); res(r); };
+    }
+    desenha();
+  });
+}
+
 // ---------- HOME ----------
 function formVazio() { return { nome: '', voluntarios: [], pastas: [], drives: [], local: '', criarDrive: false }; }
 async function vHome() {
@@ -110,7 +167,7 @@ async function vHome() {
      <div class="row"><input type="text" id="f-vol" placeholder="Nome do voluntário"><button class="fix" id="a-vol">Adicionar</button></div>
      <div class="chips">${f.voluntarios.map((v, i) => `<span class="chip">${esc(v)} <b data-rv="${i}">✕</b></span>`).join('') || '<span class="mut mini">Nenhum voluntário</span>'}</div>
      <label>Pastas de categoria (opcional)</label>
-     <div class="row"><input type="text" id="f-pasta" placeholder="Ex.: Louvor, Pregação"><button class="fix" id="a-pasta">Adicionar</button></div>
+     <div class="row"><input type="text" id="f-pasta" placeholder="Ex.: Louvor, Pregação"><button class="fix" id="a-pasta">Adicionar</button><button class="fix cinza" id="a-pred" title="Adicionar um grupo de categorias pronto">📋 Predefinições</button></div>
      <div class="chips">${f.pastas.map((v, i) => `<span class="chip">${esc(v)} <b data-rp="${i}">✕</b></span>`).join('') || '<span class="mut mini">Nenhuma pasta</span>'}</div>
      <label>Pastas do Google Drive (opcional)</label>
      <div class="row"><input type="text" id="f-dl" placeholder="Link da pasta do Drive"><input type="text" id="f-dn" placeholder="Nome (opcional)"><button class="fix" id="a-dr">Adicionar</button></div>
@@ -140,6 +197,7 @@ async function vHome() {
   q('#f-vol').onkeydown = e => { if (e.key === 'Enter') q('#a-vol').click(); };
   q('#a-pasta').onclick = () => { ler(); const v = q('#f-pasta').value.trim(); if (v && !f.pastas.includes(v)) f.pastas.push(v); vHome(); };
   q('#f-pasta').onkeydown = e => { if (e.key === 'Enter') q('#a-pasta').click(); };
+  q('#a-pred').onclick = async () => { ler(); const novas = await abrirPredefinicoes(f.pastas); if (novas) novas.forEach(n => { if (!f.pastas.includes(n)) f.pastas.push(n); }); vHome(); };
   q('#a-dr').onclick = async () => {
     ler(); const link = q('#f-dl').value.trim(); let nome = q('#f-dn').value.trim(); if (!link) return;
     if (!nome) { try { nome = (await api('/api/drive/nome-pasta?link=' + encodeURIComponent(link))).nome || ''; } catch (e) { } }
