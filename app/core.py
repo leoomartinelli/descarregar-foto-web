@@ -1,6 +1,7 @@
 """Estado global, caminhos, utilitarios e persistencia em JSON."""
 import json
 import os
+import re
 import platform
 import socket
 import subprocess
@@ -83,6 +84,19 @@ def hoje():
     return date.today().isoformat()
 
 
+_SUFIXO_DATA = re.compile(r" \d{4}-\d{2}-\d{2}$")
+
+
+def nome_pasta_categoria(categoria):
+    """Nome da pasta no disco: 'Voltz' vira 'Voltz 2026-10-08' (data de hoje). 'Raiz (Nenhuma)' nao tem pasta."""
+    return f"{categoria} {hoje()}"
+
+
+def sem_data(nome_pasta):
+    """Inverso de nome_pasta_categoria: 'Voltz 2026-10-08' -> 'Voltz' (usado nas estatisticas/webhook)."""
+    return _SUFIXO_DATA.sub("", nome_pasta)
+
+
 def nome_valido(nome):
     return not any(c in nome for c in INVALID_NAME_CHARS) and nome not in ('.', '..')
 
@@ -154,7 +168,7 @@ def criar_estrutura_servir(servir):
             raiz = os.path.join(base, nome)
             os.makedirs(raiz, exist_ok=True)
             for cat in servir.get("pastas_predefinidas", []):
-                os.makedirs(os.path.join(raiz, cat), exist_ok=True)
+                os.makedirs(os.path.join(raiz, nome_pasta_categoria(cat)), exist_ok=True)
         except Exception as e:
             print(f"Erro ao criar estrutura de pastas em {base}: {e}")
 
@@ -189,7 +203,7 @@ def calcular_caminho_final(base_destino, fotografo, categoria="Raiz (Nenhuma)", 
     if E.active_servir:
         base_servir = os.path.join(base_destino, E.active_servir.get("nome"))
         destino = (os.path.join(base_servir, fotografo) if categoria == "Raiz (Nenhuma)"
-                   else os.path.join(base_servir, categoria, fotografo))
+                   else os.path.join(base_servir, nome_pasta_categoria(categoria), fotografo))
         tem_pasta = True
     else:
         destino = os.path.join(base_destino, fotografo) if criar_subpasta else base_destino
@@ -207,7 +221,7 @@ def pasta_fotografo(base_destino, fotografo, categoria, criar_subpasta=True):
     if E.active_servir:
         base_servir = os.path.join(base_destino, E.active_servir.get("nome"))
         return (os.path.join(base_servir, fotografo) if categoria == "Raiz (Nenhuma)"
-                else os.path.join(base_servir, categoria, fotografo))
+                else os.path.join(base_servir, nome_pasta_categoria(categoria), fotografo))
     return os.path.join(base_destino, fotografo) if criar_subpasta else base_destino
 
 

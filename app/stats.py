@@ -54,7 +54,9 @@ def obter_estatisticas_locais():
         cat_dir = os.path.join(raiz, cat)
         if not os.path.isdir(cat_dir):
             continue
-        categorias[cat] = []
+        # a pasta no disco tem a data ('Voltz 2026-10-08'); o nome da categoria enviado e so 'Voltz'.
+        # Dias diferentes do mesmo Servir caem na mesma categoria.
+        destino_cat = categorias.setdefault(core.sem_data(cat), [])
         for fotog in os.listdir(cat_dir):
             fdir = os.path.join(cat_dir, fotog)
             if not os.path.isdir(fdir):
@@ -70,7 +72,7 @@ def obter_estatisticas_locais():
                                 cams.add(cam)
                             if len_ != "Desconhecida":
                                 lentes.add(len_)
-            categorias[cat].append({"nome_fotografo": fotog, "total_fotos": total,
+            destino_cat.append({"nome_fotografo": fotog, "total_fotos": total,
                                     "cameras": list(cams), "lentes": list(lentes)})
     return [{"nome": n, "fotografos": f} for n, f in categorias.items()]
 
