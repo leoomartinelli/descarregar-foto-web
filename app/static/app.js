@@ -66,7 +66,8 @@ function escolherPasta(titulo, inicio) {
 }
 
 async function carregar() { S.st = await api('/api/state'); const b = document.getElementById('banner'); const u = S.st.update;
-  if (u && u.disponivel) { b.classList.remove('hidden'); b.innerHTML = `${esc(u.msg)} <button id="b-up">Atualizar agora</button>`;
+  if (S.st.precisa_reiniciar) { b.classList.remove('hidden'); b.style.background = 'var(--lar)'; b.innerHTML = '⚠️ O programa foi atualizado. <b>Feche o servidor (Ctrl+C no terminal) e abra de novo</b> (rodar.sh / rodar.bat) para aplicar as mudanças.'; }
+  else if (u && u.disponivel) { b.style.background = ''; b.classList.remove('hidden'); b.innerHTML = `${esc(u.msg)} <button id="b-up">Atualizar agora</button>`;
     document.getElementById('b-up').onclick = async () => { try { const r = await api('/api/update/aplicar', { body: {} }); toast(r.msg); b.classList.add('hidden'); } catch (e) { toast(e.message, true); } };
   } else b.classList.add('hidden'); }
 function ir(v) { S.view = v; pararPoll(); render(); }

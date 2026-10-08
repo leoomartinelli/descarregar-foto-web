@@ -21,6 +21,28 @@ ROTAS_LAN = {"/preset", "/stats", "/register", "/finalize"}
 UPDATE = {"disponivel": False, "msg": ""}
 
 
+def _head():
+    try:
+        r = subprocess.run(["git", "rev-parse", "HEAD"], cwd=core.BASE_DIR, capture_output=True, text=True, timeout=3)
+        return r.stdout.strip() or None
+    except Exception:
+        return None
+
+
+_HEAD_INICIO = _head()           # versao do codigo quando este servidor foi iniciado
+_cache_reinicio = {"t": 0.0, "v": False}
+
+
+def precisa_reiniciar():
+    """True se o codigo em disco (git HEAD) mudou depois que este servidor iniciou: o Python so le o codigo ao
+    iniciar, entao a tela avisa que e preciso reiniciar para as mudancas do servidor valerem."""
+    agora = time.time()
+    if agora - _cache_reinicio["t"] > 10:
+        atual = _head()
+        _cache_reinicio.update(t=agora, v=bool(_HEAD_INICIO and atual and atual != _HEAD_INICIO))
+    return _cache_reinicio["v"]
+
+
 @app.middleware("http")
 async def restringir_acesso(request: Request, call_next):
     if request.url.path not in ROTAS_LAN and os.environ.get("ALLOW_REMOTE_UI") != "1":
@@ -55,6 +77,7 @@ def estado():
         "pastas_drive": cfg["pastas"], "pastas_local": cfg["pastas_local"],
         "transferidas": len(E.arquivos_transferidos),
         "update": UPDATE,
+        "precisa_reiniciar": precisa_reiniciar(),
     }
 
 
