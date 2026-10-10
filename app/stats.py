@@ -51,6 +51,7 @@ def obter_estatisticas_locais():
     categorias = {}
     if not os.path.isdir(raiz):
         return []
+    enviados = core.carregar_enviados(raiz)
     for cat in os.listdir(raiz):
         cat_dir = os.path.join(raiz, cat)
         if not os.path.isdir(cat_dir):
@@ -62,18 +63,20 @@ def obter_estatisticas_locais():
             fdir = os.path.join(cat_dir, fotog)
             if not os.path.isdir(fdir):
                 continue
-            total, cams, lentes = 0, set(), set()
+            total, no_drive, cams, lentes = 0, 0, set(), set()
             for root, _, files in os.walk(fdir):
                 for nome in files:
                     if nome.lower().endswith(core.EXT_TODAS):
                         total += 1
+                        if core._chave_arquivo(raiz, os.path.join(root, nome)) in enviados:
+                            no_drive += 1
                         if nome.lower().endswith(core.EXT_IMG):
                             cam, len_ = extrair_camera_e_lente(os.path.join(root, nome))
                             if cam != "Desconhecida":
                                 cams.add(cam)
                             if len_ != "Desconhecida":
                                 lentes.add(len_)
-            destino_cat.append({"nome_fotografo": fotog, "total_fotos": total,
+            destino_cat.append({"nome_fotografo": fotog, "total_fotos": total, "enviadas_drive": no_drive,
                                     "cameras": list(cams), "lentes": list(lentes)})
     return [{"nome": n, "fotografos": f} for n, f in categorias.items()]
 
@@ -91,8 +94,9 @@ def mesclar_estatisticas(stats_lider, stats_auxiliares):
                 fn = f.get("nome_fotografo")
                 if not fn:
                     continue
-                d = m.setdefault(fn, {"total_fotos": 0, "cameras": set(), "lentes": set()})
+                d = m.setdefault(fn, {"total_fotos": 0, "enviadas_drive": 0, "cameras": set(), "lentes": set()})
                 d["total_fotos"] += f.get("total_fotos", 0)
+                d["enviadas_drive"] += f.get("enviadas_drive", 0)
                 d["cameras"].update(f.get("cameras", []))
                 d["lentes"].update(f.get("lentes", []))
 
@@ -100,7 +104,7 @@ def mesclar_estatisticas(stats_lider, stats_auxiliares):
     for sa in stats_auxiliares:
         somar(sa)
     return [{"nome": cn, "fotografos": [
-        {"nome_fotografo": n, "total_fotos": d["total_fotos"],
+        {"nome_fotografo": n, "total_fotos": d["total_fotos"], "enviadas_drive": d["enviadas_drive"],
          "cameras": list(d["cameras"]), "lentes": list(d["lentes"])} for n, d in fm.items()]}
         for cn, fm in mapa.items()]
 
@@ -110,8 +114,9 @@ def resumo_por_voluntario(categorias):
     info = {}
     for cat in categorias:
         for f in cat.get("fotografos", []):
-            i = info.setdefault(f["nome_fotografo"].strip().lower(), {"fotos": 0, "cameras": set(), "lentes": set(), "categorias": {}})
+            i = info.setdefault(f["nome_fotografo"].strip().lower(), {"fotos": 0, "drive": 0, "cameras": set(), "lentes": set(), "categorias": {}})
             i["fotos"] += f.get("total_fotos", 0)
+            i["drive"] += f.get("enviadas_drive", 0)
             i["categorias"][cat["nome"]] = i["categorias"].get(cat["nome"], 0) + f.get("total_fotos", 0)
             i["cameras"].update(f.get("cameras", []))
             i["lentes"].update(f.get("lentes", []))

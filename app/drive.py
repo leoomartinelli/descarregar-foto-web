@@ -281,6 +281,7 @@ def iniciar_upload(link_pasta, fotografo=""):
         else:
             destino_nome = f"a pasta '{meta.get('name')}'"
 
+    raiz = core.raiz_servir(E.active_servir) if E.active_servir else None
     arquivos = list(E.arquivos_transferidos)  # copia: o proximo fotografo pode trocar a lista global
     with _lock_fila:
         _contador += 1
@@ -289,7 +290,7 @@ def iniciar_upload(link_pasta, fotografo=""):
                "msg": "Na fila de envio..."}
         E.uploads.append(job)
         del E.uploads[:-20]  # mantem so os 20 mais recentes
-        _fila.put((job, creds, folder_id, arquivos))
+        _fila.put((job, creds, folder_id, arquivos, raiz))
         if not _worker_ativo:
             _worker_ativo = True
             threading.Thread(target=_worker, daemon=True).start()
@@ -307,12 +308,28 @@ def _worker():
             if _fila.empty():
                 _worker_ativo = False
                 return
-            job, creds, folder_id, arquivos = _fila.get()
-        _enviar(job, creds, folder_id, arquivos)
+            job, creds, folder_id, arquivos, raiz = _fila.get()
+        _enviar(job, creds, folder_id, arquivos, raiz)
 
 
-def _enviar(job, creds, folder_id, arquivos):
+def _enviar(job, creds, folder_id, arquivos, raiz=None):
     lock = threading.Lock()
+    pendentes = []   # enviados com sucesso e ainda nao gravados em .enviados_drive.json
+
+    def registrar(caminho=None, forcar=False):
+        if not raiz:
+            return
+        with lock:
+            if caminho:
+                pendentes.append(caminho)
+            if not pendentes or (not forcar and len(pendentes) < 25):
+                return
+            lote = pendentes[:]
+            del pendentes[:]
+        try:
+            core.marcar_enviados(raiz, lote)
+        except Exception as e:
+            print(f"Erro ao registrar envios ao Drive: {e}")
     total = job["total"]
     job.update(estado="rodando", msg=f"Enviando 0/{total}...")
 
@@ -320,6 +337,7 @@ def _enviar(job, creds, folder_id, arquivos):
         nome = os.path.basename(caminho)
         with lock:
             job["atuais"].append(nome)   # so para exibir na tela: arquivos sendo enviados agora
+        enviado = False
         if os.path.exists(caminho):
             try:
                 svc = build('drive', 'v3', credentials=creds)
@@ -333,10 +351,14 @@ def _enviar(job, creds, folder_id, arquivos):
                 resp = None
                 while resp is None:
                     _, resp = req.next_chunk()
+                enviado = True
             except Exception as e:
                 print(f"Erro ao enviar {nome}: {e}")
-                with lock:
-                    job["erros"] += 1
+        if enviado:
+            registrar(caminho)
+        else:
+            with lock:
+                job["erros"] += 1
         with lock:
             if nome in job["atuais"]:
                 job["atuais"].remove(nome)
@@ -347,8 +369,13 @@ def _enviar(job, creds, folder_id, arquivos):
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
             list(ex.map(um, arquivos))
+        registrar(forcar=True)
+        if raiz:
+            from . import stats   # import tardio: stats importa drive
+            stats.atualizar_voluntarios_em_segundo_plano()
         ok = total - job["erros"]
         job.update(estado="concluido" if not job["erros"] else "erro", progresso=1, atuais=[],
                    msg=f"{ok} de {total} fotos enviadas para {job['destino']}.")
     except Exception as e:
+        registrar(forcar=True)
         job.update(estado="erro", atuais=[], msg=f"Erro durante o envio: {e}")

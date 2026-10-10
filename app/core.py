@@ -161,15 +161,48 @@ def nomes_do_texto(texto):
     return [l.split(" - ", 1)[0].strip() for l in texto.splitlines() if l.strip()]
 
 
+ARQ_ENVIADOS = ".enviados_drive.json"
+_lock_enviados = threading.Lock()
+
+
+def raiz_servir(servir):
+    return os.path.join(E.destino_base, servir.get("nome"))
+
+
+def _chave_arquivo(raiz, caminho):
+    return os.path.relpath(caminho, raiz).replace(os.sep, "/")
+
+
+def carregar_enviados(raiz):
+    """Conjunto de caminhos (relativos a <raiz> do Servir) que ja foram enviados com sucesso ao Drive."""
+    try:
+        with open(os.path.join(raiz, ARQ_ENVIADOS), encoding="utf-8") as f:
+            dados = json.load(f)
+        return set(dados) if isinstance(dados, list) else set()
+    except (OSError, ValueError):
+        return set()
+
+
+def marcar_enviados(raiz, caminhos):
+    """Registra no disco os arquivos enviados ao Drive (sobrevive a reinicios; mesmo arquivo nao conta duas vezes)."""
+    if not caminhos:
+        return
+    with _lock_enviados:
+        todos = carregar_enviados(raiz)
+        todos.update(_chave_arquivo(raiz, c) for c in caminhos)
+        with open(os.path.join(raiz, ARQ_ENVIADOS), "w", encoding="utf-8") as f:
+            json.dump(sorted(todos), f)
+
+
 def texto_voluntarios(voluntarios, info=None):
-    """Conteudo do voluntarios.txt: so os nomes, ou 'Nome - N fotos | Categoria: ... | Câmera: ... | Lente: ...' quando ha
-    'info' ({nome minusculo: {"fotos": n, "categorias": {nome: fotos}, "cameras": [...], "lentes": [...]}})."""
+    """Conteudo do voluntarios.txt: so os nomes, ou 'Nome - N fotos | No Drive: M | Categoria: ... | Câmera: ... | Lente: ...' quando ha
+    'info' ({nome minusculo: {"fotos": n, "drive": enviadas, "categorias": {nome: fotos}, "cameras": [...], "lentes": [...]}})."""
     if info is None:
         return "\n".join(voluntarios) + "\n"
     linhas = []
     for v in voluntarios:
         i = info.get(v.lower(), {})
-        linha = f"{v} - {i.get('fotos', 0)} fotos"
+        linha = f"{v} - {i.get('fotos', 0)} fotos | No Drive: {i.get('drive', 0)}"
         if i.get("categorias"):
             linha += " | Categoria: " + ", ".join(f"{c} ({n})" for c, n in sorted(i["categorias"].items()))
         if i.get("cameras"):
