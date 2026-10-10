@@ -1,10 +1,11 @@
 """Estatisticas por categoria/fotografo (camera e lente via EXIF) e mescla com auxiliares."""
 import os
+import threading
 
 from PIL import Image
 from PIL.ExifTags import TAGS
 
-from . import core
+from . import core, drive
 from .core import E
 
 
@@ -102,3 +103,41 @@ def mesclar_estatisticas(stats_lider, stats_auxiliares):
         {"nome_fotografo": n, "total_fotos": d["total_fotos"],
          "cameras": list(d["cameras"]), "lentes": list(d["lentes"])} for n, d in fm.items()]}
         for cn, fm in mapa.items()]
+
+
+def resumo_por_voluntario(categorias):
+    """Soma fotos e junta cameras/lentes de todas as categorias, por fotografo (chave em minusculas)."""
+    info = {}
+    for cat in categorias:
+        for f in cat.get("fotografos", []):
+            i = info.setdefault(f["nome_fotografo"].strip().lower(), {"fotos": 0, "cameras": set(), "lentes": set(), "categorias": {}})
+            i["fotos"] += f.get("total_fotos", 0)
+            i["categorias"][cat["nome"]] = i["categorias"].get(cat["nome"], 0) + f.get("total_fotos", 0)
+            i["cameras"].update(f.get("cameras", []))
+            i["lentes"].update(f.get("lentes", []))
+    return info
+
+
+def gravar_voluntarios_servir(servir, info):
+    """Atualiza o voluntarios.txt local (e o do Drive, se o Servir tiver pasta). Nunca levanta excecao."""
+    try:
+        core.gravar_voluntarios(os.path.join(E.destino_base, servir.get("nome")), servir.get("voluntarios", []), info)
+    except Exception as e:
+        print(f"Erro ao atualizar voluntarios.txt: {e}")
+    if servir.get("drive_folders"):
+        drive.gravar_voluntarios(servir, info)
+
+
+_lock_voluntarios = threading.Lock()
+
+
+def atualizar_voluntarios_em_segundo_plano():
+    """Chamado ao fim de cada descarregamento: recalcula fotos/camera/lente de todos e regrava o voluntarios.txt."""
+    servir = E.active_servir
+    if not servir:
+        return
+
+    def tarefa():
+        with _lock_voluntarios:
+            gravar_voluntarios_servir(servir, resumo_por_voluntario(obter_estatisticas_locais()))
+    threading.Thread(target=tarefa, daemon=True).start()

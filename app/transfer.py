@@ -6,7 +6,7 @@ import time
 
 import psutil
 
-from . import core
+from . import core, stats
 from .core import E
 
 
@@ -244,6 +244,7 @@ def _copiar(fotografo, destino, base_fotografo, arquivos):
         E.transfer.update(estado="concluido", progresso=1,
                           msg=f"{len(copiados)} arquivo(s) copiados" + (f", {falhas} com erro (veja o log)" if falhas else ""),
                           revisaveis=len(transferidos), falhas=falhas)
+        stats.atualizar_voluntarios_em_segundo_plano()
     except Exception as e:
         E.transfer.update(estado="erro", msg=str(e))
 

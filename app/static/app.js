@@ -463,6 +463,7 @@ async function abrirRevisor() {
   let lista; try { lista = (await api('/api/revisor')).arquivos; } catch (e) { return toast(e.message, true); }
   if (!lista.length) return alerta('Aviso', 'Não há fotos na lista de transferência para revisar.');
   pararPoll();
+  const v = Date.now();   // muda a cada abertura: a URL so tem o indice, entao sem isso o navegador reaproveita fotos de descarregamentos anteriores
   const desc = new Set(); const ordemDesc = []; let i = 0; let tempo = null;
   const el = document.createElement('div'); el.className = 'rev';
   el.innerHTML = `<div class="bar"><button class="cinza" id="r-ant">◀ Anterior</button><div class="info" id="r-info"></div><button class="cinza" id="r-prox">Próxima ▶</button>
@@ -471,12 +472,12 @@ async function abrirRevisor() {
     <div class="strip" id="r-strip"></div><div class="kbd">← → navegar · Del/Backspace/X descartar · Ctrl+Z desfazer · Enter finalizar · Esc sair</div>`;
   document.body.appendChild(el);
   const $ = s => el.querySelector(s); const img = $('#r-img');
-  $('#r-strip').innerHTML = lista.map((n, k) => `<img data-k="${k}" title="${esc(n)}" loading="lazy" src="/api/revisor/imagem/${k}?lado=160">`).join('');
+  $('#r-strip').innerHTML = lista.map((n, k) => `<img data-k="${k}" title="${esc(n)}" loading="lazy" src="/api/revisor/imagem/${k}?lado=160&v=${v}">`).join('');
   $('#r-strip').querySelectorAll('img').forEach(t => t.onclick = () => { i = +t.dataset.k; mostra(); });
-  function precarrega() { [i + 1, i - 1, i + 2].forEach(k => { if (k >= 0 && k < lista.length) new Image().src = `/api/revisor/imagem/${k}`; }); }
+  function precarrega() { [i + 1, i - 1, i + 2].forEach(k => { if (k >= 0 && k < lista.length) new Image().src = `/api/revisor/imagem/${k}?v=${v}`; }); }
   function mostra() {
     const d = desc.has(i);
-    img.src = `/api/revisor/imagem/${i}`; $('#r-stage').classList.toggle('desc', d); $('#r-stamp').classList.toggle('hidden', !d);
+    img.src = `/api/revisor/imagem/${i}?v=${v}`; $('#r-stage').classList.toggle('desc', d); $('#r-stamp').classList.toggle('hidden', !d);
     const rest = lista.length - desc.size;
     $('#r-info').innerHTML = `<b>Foto ${i + 1}/${lista.length}</b> · ${esc(lista[i])}<br><span class="mini" style="color:#aaa">${desc.size} marcada(s) para descarte · ${rest} mantida(s)</span>`;
     $('#r-undo').disabled = !ordemDesc.length;

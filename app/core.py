@@ -154,6 +154,51 @@ def salvar_dias(dias):
     gravar_json(PATH_DIAS, dias)
 
 
+ARQ_VOLUNTARIOS = "voluntarios.txt"
+
+
+def nomes_do_texto(texto):
+    return [l.split(" - ", 1)[0].strip() for l in texto.splitlines() if l.strip()]
+
+
+def texto_voluntarios(voluntarios, info=None):
+    """Conteudo do voluntarios.txt: so os nomes, ou 'Nome - N fotos | Categoria: ... | Câmera: ... | Lente: ...' quando ha
+    'info' ({nome minusculo: {"fotos": n, "categorias": {nome: fotos}, "cameras": [...], "lentes": [...]}})."""
+    if info is None:
+        return "\n".join(voluntarios) + "\n"
+    linhas = []
+    for v in voluntarios:
+        i = info.get(v.lower(), {})
+        linha = f"{v} - {i.get('fotos', 0)} fotos"
+        if i.get("categorias"):
+            linha += " | Categoria: " + ", ".join(f"{c} ({n})" for c, n in sorted(i["categorias"].items()))
+        if i.get("cameras"):
+            linha += " | Câmera: " + ", ".join(sorted(i["cameras"]))
+        if i.get("lentes"):
+            linha += " | Lente: " + ", ".join(sorted(i["lentes"]))
+        linhas.append(linha)
+    return "\n".join(linhas) + "\n"
+
+
+def _nomes_do_arquivo(caminho):
+    try:
+        with open(caminho, encoding="utf-8") as f:
+            return nomes_do_texto(f.read())
+    except OSError:
+        return None
+
+
+def gravar_voluntarios(raiz, voluntarios, info=None):
+    """Escreve <raiz>/voluntarios.txt. Sem 'info' so lista os nomes (e preserva o arquivo se os nomes nao mudaram,
+    para nao apagar as contagens); com 'info' coloca fotos, camera e lente na frente do nome."""
+    caminho = os.path.join(raiz, ARQ_VOLUNTARIOS)
+    if info is None:
+        if _nomes_do_arquivo(caminho) == list(voluntarios):
+            return
+    with open(caminho, "w", encoding="utf-8") as f:
+        f.write(texto_voluntarios(voluntarios, info))
+
+
 def criar_estrutura_servir(servir):
     """Pre-cria <base>/<servir>/<categoria> nas bases conhecidas."""
     nome = servir.get("nome")
@@ -170,6 +215,7 @@ def criar_estrutura_servir(servir):
             os.makedirs(raiz, exist_ok=True)
             for cat in servir.get("pastas_predefinidas", []):
                 os.makedirs(os.path.join(raiz, nome_pasta_categoria(cat)), exist_ok=True)
+            gravar_voluntarios(raiz, servir.get("voluntarios", []))
         except Exception as e:
             print(f"Erro ao criar estrutura de pastas em {base}: {e}")
 

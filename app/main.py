@@ -169,6 +169,7 @@ def criar_pastas_drive(sid: str):
                 resultado = drive.criar_pastas_categorias(s)
             except RuntimeError as e:
                 erro(str(e), 502)
+            drive.gravar_voluntarios(s)
             return {"resultado": resultado, "servir": _registrar_pastas_drive(sid, resultado)}
     erro("Servir não encontrado.", 404)
 
@@ -379,15 +380,25 @@ def revisor_lista():
 
 
 @app.get("/api/revisor/imagem/{i}")
-def revisor_imagem(i: int, lado: int = 1600):
+def revisor_imagem(i: int, request: Request, lado: int = 1600):
     if not 0 <= i < len(E.arquivos_transferidos):
         erro("Foto inexistente.", 404)
     lado = max(64, min(lado, 4000))
+    caminho = E.arquivos_transferidos[i]
+    # a URL so tem o indice: a mesma URL aponta para fotos diferentes a cada descarregamento. Por isso o navegador
+    # precisa revalidar (ETag do arquivo real) em vez de reaproveitar a foto do descarregamento anterior.
     try:
-        dados = review.renderizar(E.arquivos_transferidos[i], lado)
+        etag = f'"{hash((caminho, lado, os.path.getmtime(caminho)))}"'
+    except OSError:
+        erro("Foto inexistente.", 404)
+    cab = {"Cache-Control": "private, no-cache", "ETag": etag}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=cab)
+    try:
+        dados = review.renderizar(caminho, lado)
     except Exception as e:
         erro(f"Erro ao carregar imagem: {e}", 500)
-    return Response(dados, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+    return Response(dados, media_type="image/jpeg", headers=cab)
 
 
 @app.post("/api/revisor/finalizar")

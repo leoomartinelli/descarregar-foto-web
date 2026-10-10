@@ -122,10 +122,13 @@ def finalizar_servir(ignorar_erros=False):
     aux, erros = coletar_stats_auxiliares()
     if erros and not ignorar_erros:
         return {"status": "confirmar", "estacoes_com_erro": erros}
+    categorias = stats.mesclar_estatisticas(stats.obter_estatisticas_locais(), aux)
+    info = stats.resumo_por_voluntario(categorias)
+    stats.gravar_voluntarios_servir(servir, info)
     payload = {
         "servir": {k: servir.get(k) for k in ("id", "nome", "data_criacao", "drive_link", "drive_nome")}
         | {"voluntarios": servir.get("voluntarios", []), "pastas_predefinidas": servir.get("pastas_predefinidas", [])},
-        "categorias": stats.mesclar_estatisticas(stats.obter_estatisticas_locais(), aux),
+        "categorias": categorias,
     }
     r = requests.post(core.WEBHOOK_URL, json=payload, headers={"Content-Type": "application/json"}, timeout=30)
     if r.status_code not in (200, 201):

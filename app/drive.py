@@ -13,7 +13,7 @@ try:
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import InstalledAppFlow
     from googleapiclient.discovery import build
-    from googleapiclient.http import MediaFileUpload
+    from googleapiclient.http import MediaFileUpload, MediaInMemoryUpload
     DISPONIVEL = True
 except ImportError:
     DISPONIVEL = False
@@ -209,6 +209,48 @@ def criar_pastas_categorias(servir):
             except Exception as e:
                 resultado.append({"base": pasta.get("nome"), "pasta": nome, "categoria": cat, "ok": False, "erro": str(e)})
     return resultado
+
+
+def _bases_drive(servir):
+    ids = []
+    for pasta in servir.get("drive_folders", []):
+        if pasta.get("auto"):
+            continue
+        base = extrair_id_pasta(pasta.get("link"))
+        if base != 'root':
+            ids.append(base)
+    return ids
+
+
+def gravar_voluntarios(servir, info=None):
+    """Cria/atualiza voluntarios.txt em cada pasta base do Drive do Servir (ao lado das pastas de categoria).
+    Sem 'info' so lista os nomes e nao mexe num arquivo que ja tem os mesmos nomes (preserva as contagens).
+    Retorna a lista de erros (vazia se tudo certo); nunca levanta excecao."""
+    erros = []
+    creds = _credenciais() if DISPONIVEL else None
+    if not creds:
+        return ["sem login no Google"]
+    vols = servir.get("voluntarios", [])
+    texto = core.texto_voluntarios(vols, info)
+    svc = build('drive', 'v3', credentials=creds)
+    for base in _bases_drive(servir):
+        try:
+            q = f"name = '{core.ARQ_VOLUNTARIOS}' and '{base}' in parents and trashed = false"
+            achados = svc.files().list(q=q, fields='files(id)', pageSize=1).execute().get('files', [])
+            media = MediaInMemoryUpload(texto.encode('utf-8'), mimetype='text/plain')
+            if achados:
+                if info is None:
+                    atual = svc.files().get_media(fileId=achados[0]['id']).execute().decode('utf-8', 'replace')
+                    if core.nomes_do_texto(atual) == list(vols):
+                        continue
+                svc.files().update(fileId=achados[0]['id'], media_body=media).execute()
+            else:
+                svc.files().create(body={'name': core.ARQ_VOLUNTARIOS, 'parents': [base]},
+                                   media_body=media, fields='id').execute()
+        except Exception as e:
+            print(f"Erro ao gravar voluntarios.txt no Drive: {e}")
+            erros.append(str(e))
+    return erros
 
 
 def iniciar_upload(link_pasta, fotografo=""):
