@@ -53,12 +53,14 @@ def _escutar(gen):
             time.sleep(2.0)
             continue
         try:
-            data, _ = sock.recvfrom(1024)
+            data, origem = sock.recvfrom(1024)
             msg = data.decode()
             if msg.startswith("SERVIR_LEADER:"):
                 p = msg.split(":")
                 if len(p) >= 5:
-                    E.lider_detectado = {"ip": p[1], "port": int(p[2]), "nome_evento": p[3], "evento_id": p[4]}
+                    # usa o endereco de origem do pacote: e o IP realmente alcancavel nesta rede
+                    # (o IP escrito na mensagem pode ser de VPN/outra interface do lider)
+                    E.lider_detectado = {"ip": origem[0] or p[1], "port": int(p[2]), "nome_evento": p[3], "evento_id": p[4]}
         except socket.timeout:
             continue
         except Exception as e:
