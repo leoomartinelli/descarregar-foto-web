@@ -309,6 +309,12 @@ def iniciar_upload(link_pasta, fotografo=""):
         if not _worker_ativo:
             _worker_ativo = True
             threading.Thread(target=_worker, daemon=True).start()
+    atual, E.descarregamento_atual = E.descarregamento_atual, None
+    if atual:
+        try:
+            core.marcar_envio_drive(atual)   # tempo desde o fim da copia ate o clique em enviar
+        except Exception as e:
+            print(f"Erro ao registrar tempo ate o envio ao Drive: {e}")
     return {"id": job["id"], "total": job["total"], "ignoradas": subindo + ja_foram}
 
 

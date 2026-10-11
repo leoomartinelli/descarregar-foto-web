@@ -238,8 +238,8 @@ def _copiar(fotografo, destino, base_fotografo, arquivos):
             core.registrar_historico(fotografo, base_fotografo, len(transferidos))
         if copiados and E.active_servir:
             try:
-                core.registrar_descarregamento(core.raiz_servir(E.active_servir), base_fotografo,
-                                               len(copiados), time.time() - t0)
+                E.descarregamento_atual = core.registrar_descarregamento(
+                    core.raiz_servir(E.active_servir), base_fotografo, len(copiados), time.time() - t0)
             except Exception as e:
                 print(f"Erro ao registrar tempo de descarregamento: {e}")
         falhas = total - len(copiados)

@@ -66,6 +66,8 @@ class Estado:
         self.arquivos_transferidos = []
         self.sessao_fotografo = None
         self.sessao_destino = None
+        # ultimo descarregamento ainda sem envio ao Drive: {"raiz", "chave", "fim_ts"} (mede o tempo ate o envio)
+        self.descarregamento_atual = None
         # rede local
         self.network_mode = "lider"
         self.local_port = int(os.environ.get("PORT", 50007))
@@ -255,7 +257,9 @@ def carregar_descarregamentos(raiz):
 
 
 def registrar_descarregamento(raiz, pasta_fotografo, fotos, segundos):
+    """Grava o descarregamento. Retorna {"raiz", "chave", "fim_ts"} para depois medir o tempo ate o envio ao Drive."""
     chave = _chave_arquivo(raiz, pasta_fotografo)
+    fim_ts = time.time()
     with _lock_enviados:
         dados = carregar_descarregamentos(raiz)
         atual = dados.setdefault(chave, {"fotos": 0, "segundos": 0.0})
@@ -263,9 +267,23 @@ def registrar_descarregamento(raiz, pasta_fotografo, fotos, segundos):
         atual["segundos"] = round(atual["segundos"] + segundos, 1)
         atual.setdefault("eventos", []).append({
             "data_hora": time.strftime("%Y-%m-%d %H:%M:%S"), "fotos": fotos, "segundos": round(segundos, 1),
-            "estacao": platform.node() or "Estação"})
+            "estacao": platform.node() or "Estação", "fim_ts": fim_ts, "segundos_ate_envio": None})
         with open(os.path.join(raiz, ARQ_DESCARREGAMENTOS), "w", encoding="utf-8") as f:
             json.dump(dados, f)
+    return {"raiz": raiz, "chave": chave, "fim_ts": fim_ts}
+
+
+def marcar_envio_drive(atual):
+    """Chamado quando o voluntario manda as fotos desse descarregamento ao Drive: grava quanto tempo passou
+    desde o fim da copia (so a primeira vez)."""
+    with _lock_enviados:
+        dados = carregar_descarregamentos(atual["raiz"])
+        for ev in dados.get(atual["chave"], {}).get("eventos", []):
+            if ev.get("fim_ts") == atual["fim_ts"] and ev.get("segundos_ate_envio") is None:
+                ev["segundos_ate_envio"] = round(time.time() - atual["fim_ts"], 1)
+                with open(os.path.join(atual["raiz"], ARQ_DESCARREGAMENTOS), "w", encoding="utf-8") as f:
+                    json.dump(dados, f)
+                return
 
 
 def formatar_duracao(segundos):

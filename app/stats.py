@@ -116,6 +116,7 @@ def mesclar_estatisticas(stats_lider, stats_auxiliares):
         {"nome_fotografo": n, "total_fotos": d["total_fotos"], "enviadas_drive": d["enviadas_drive"],
          "descarregadas": d["descarregadas"], "segundos": d["segundos"],
          "vezes_descarregou": len(d["descarregamentos"]),
+         "segundos_ate_envio": round(sum(e.get("segundos_ate_envio") or 0 for e in d["descarregamentos"]), 1),
          "descarregamentos": sorted(d["descarregamentos"], key=lambda e: e.get("data_hora", "")),
          "cameras": list(d["cameras"]), "lentes": list(d["lentes"])} for n, d in fm.items()]}
         for cn, fm in mapa.items()]
