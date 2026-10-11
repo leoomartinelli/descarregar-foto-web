@@ -173,36 +173,119 @@ def _chave_arquivo(raiz, caminho):
     return os.path.relpath(caminho, raiz).replace(os.sep, "/")
 
 
-def carregar_enviados(raiz):
-    """Conjunto de caminhos (relativos a <raiz> do Servir) que ja foram enviados com sucesso ao Drive."""
+def _ler_enviados(raiz):
     try:
         with open(os.path.join(raiz, ARQ_ENVIADOS), encoding="utf-8") as f:
             dados = json.load(f)
-        return set(dados) if isinstance(dados, list) else set()
     except (OSError, ValueError):
-        return set()
+        return {}
+    if isinstance(dados, list):      # formato antigo: so os caminhos, sem a pasta de destino
+        return {c: None for c in dados}
+    return dados if isinstance(dados, dict) else {}
 
 
-def marcar_enviados(raiz, caminhos):
+def carregar_enviados(raiz):
+    """Conjunto de caminhos (relativos a <raiz> do Servir) que ja foram enviados com sucesso ao Drive."""
+    return set(_ler_enviados(raiz))
+
+
+def carregar_enviados_destino(raiz):
+    """{caminho relativo: id da pasta do Drive para onde foi}; None quando o registro e antigo."""
+    return _ler_enviados(raiz)
+
+
+def marcar_enviados(raiz, caminhos, pasta_drive=None):
     """Registra no disco os arquivos enviados ao Drive (sobrevive a reinicios; mesmo arquivo nao conta duas vezes)."""
     if not caminhos:
         return
     with _lock_enviados:
-        todos = carregar_enviados(raiz)
-        todos.update(_chave_arquivo(raiz, c) for c in caminhos)
+        todos = _ler_enviados(raiz)
+        for c in caminhos:
+            todos[_chave_arquivo(raiz, c)] = pasta_drive
         with open(os.path.join(raiz, ARQ_ENVIADOS), "w", encoding="utf-8") as f:
-            json.dump(sorted(todos), f)
+            json.dump(todos, f)
+
+
+ARQ_NUMERACAO = ".numeracao.json"
+
+
+def maior_numero(pasta, fotografo):
+    """Maior N entre os arquivos '<fotografo>_N...' dentro da pasta (recursivo); 0 se nao houver."""
+    prefixo = f"{fotografo}_"
+    maior = 0
+    for _, _, files in os.walk(pasta):
+        for f in files:
+            if f.startswith(prefixo):
+                parte = os.path.splitext(f[len(prefixo):])[0].split('_')[0]
+                if parte.isdigit():
+                    maior = max(maior, int(parte))
+    return maior
+
+
+def reservar_numeracao(raiz, chave, fotografo, quantidade, maximo_remoto=0):
+    """Roda no LIDER (e no PC unico): devolve o primeiro numero livre para 'quantidade' fotos do fotografo e reserva
+    a faixa, para que o mesmo voluntario descarregando em outro PC (auxiliar) continue a sequencia sem repetir."""
+    with _lock_enviados:
+        caminho = os.path.join(raiz, ARQ_NUMERACAO)
+        try:
+            with open(caminho, encoding="utf-8") as f:
+                reservas = json.load(f)
+        except (OSError, ValueError):
+            reservas = {}
+        ultimo = max(maior_numero(os.path.join(raiz, chave), fotografo), int(reservas.get(chave, 0)),
+                     int(maximo_remoto or 0))
+        reservas[chave] = ultimo + quantidade
+        with open(caminho, "w", encoding="utf-8") as f:
+            json.dump(reservas, f)
+        return ultimo + 1
+
+
+ARQ_DESCARREGAMENTOS = ".descarregamentos.json"
+
+
+def carregar_descarregamentos(raiz):
+    """{'<categoria>/<fotografo>': {'fotos': n copiadas do cartao, 'segundos': tempo gasto copiando}}.
+    Guarda o que foi descarregado de verdade: as fotos no disco diminuem quando o revisor apaga as ruins."""
+    try:
+        with open(os.path.join(raiz, ARQ_DESCARREGAMENTOS), encoding="utf-8") as f:
+            dados = json.load(f)
+        return dados if isinstance(dados, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def registrar_descarregamento(raiz, pasta_fotografo, fotos, segundos):
+    chave = _chave_arquivo(raiz, pasta_fotografo)
+    with _lock_enviados:
+        dados = carregar_descarregamentos(raiz)
+        atual = dados.setdefault(chave, {"fotos": 0, "segundos": 0.0})
+        atual["fotos"] += fotos
+        atual["segundos"] = round(atual["segundos"] + segundos, 1)
+        with open(os.path.join(raiz, ARQ_DESCARREGAMENTOS), "w", encoding="utf-8") as f:
+            json.dump(dados, f)
+
+
+def formatar_duracao(segundos):
+    s = int(round(segundos))
+    h, resto = divmod(s, 3600)
+    m, s = divmod(resto, 60)
+    if h:
+        return f"{h}h {m:02d}min {s:02d}s"
+    return f"{m}min {s:02d}s" if m else f"{s}s"
 
 
 def texto_voluntarios(voluntarios, info=None):
-    """Conteudo do voluntarios.txt: so os nomes, ou 'Nome - N fotos | No Drive: M | Categoria: ... | Câmera: ... | Lente: ...' quando ha
-    'info' ({nome minusculo: {"fotos": n, "drive": enviadas, "categorias": {nome: fotos}, "cameras": [...], "lentes": [...]}})."""
+    """Conteudo do voluntarios.txt: so os nomes, ou 'Nome - Descarregadas: N | No Drive: M | Tempo | Categoria: ... | Câmera: ... | Lente: ...' quando ha
+    'info' ({nome minusculo: {"descarregadas": n, "segundos": s, "fotos": n_no_disco, "drive": enviadas, "categorias": {nome: fotos}, "cameras": [...], "lentes": [...]}})."""
     if info is None:
         return "\n".join(voluntarios) + "\n"
     linhas = []
     for v in voluntarios:
         i = info.get(v.lower(), {})
-        linha = f"{v} - {i.get('fotos', 0)} fotos | No Drive: {i.get('drive', 0)}"
+        linha = f"{v} - Descarregadas: {i.get('descarregadas', i.get('fotos', 0))}" \
+                f" | No Drive: {i.get('drive', 0)}"
+        if i.get("segundos"):
+            linha += " | Tempo: " + formatar_duracao(i["segundos"])
         if i.get("categorias"):
             linha += " | Categoria: " + ", ".join(f"{c} ({n})" for c, n in sorted(i["categorias"].items()))
         if i.get("cameras"):

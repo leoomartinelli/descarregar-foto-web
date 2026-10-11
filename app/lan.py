@@ -98,6 +98,26 @@ def sincronizar_com_lider():
     return preset
 
 
+def numero_inicial(raiz, base_fotografo, fotografo, quantidade):
+    """Primeiro numero das fotos do fotografo nesta descarga. Retorna (inicio, aviso).
+    Lider (ou PC unico) reserva localmente; auxiliar pede ao lider para continuar a mesma sequencia."""
+    chave = core._chave_arquivo(raiz, base_fotografo)
+    if E.network_mode != "auxiliar" or not E.lider_detectado:
+        return core.reservar_numeracao(raiz, chave, fotografo, quantidade), None
+    local = core.maior_numero(base_fotografo, fotografo)
+    try:
+        r = requests.post(f"http://{E.lider_detectado['ip']}:{E.lider_detectado['port']}/numeracao", timeout=3.0,
+                          json={"chave": chave, "fotografo": fotografo, "quantidade": quantidade,
+                                "maximo_local": local})
+        if r.status_code == 200:
+            return max(int(r.json()["inicio"]), local + 1), None
+        aviso = f"o líder respondeu {r.status_code}"
+    except Exception as e:
+        aviso = f"sem contato com o líder ({type(e).__name__})"
+    return local + 1, ("Numeração feita só com as fotos deste computador: " + aviso +
+                       ". Se o voluntário já descarregou em outro PC, os números podem repetir.")
+
+
 # ---------- finalizar servir (lider) ----------
 
 def coletar_stats_auxiliares():

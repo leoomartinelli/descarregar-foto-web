@@ -171,6 +171,7 @@ _fila = queue.Queue()
 _worker_ativo = False
 _lock_fila = threading.Lock()
 _contador = 0
+_em_envio = set()   # caminhos que estao na fila ou sendo enviados agora (evita enviar duas vezes com duplo clique)
 
 
 def _pasta_filha(svc, nome, pai_id):
@@ -282,8 +283,22 @@ def iniciar_upload(link_pasta, fotografo=""):
             destino_nome = f"a pasta '{meta.get('name')}'"
 
     raiz = core.raiz_servir(E.active_servir) if E.active_servir else None
-    arquivos = list(E.arquivos_transferidos)  # copia: o proximo fotografo pode trocar a lista global
+    todos = list(E.arquivos_transferidos)  # copia: o proximo fotografo pode trocar a lista global
+    ja_enviados = core.carregar_enviados_destino(raiz) if raiz else {}
     with _lock_fila:
+        arquivos, subindo, ja_foram = [], 0, 0
+        for a in todos:
+            if a in _em_envio:
+                subindo += 1
+            elif raiz and folder_id != 'root' and ja_enviados.get(core._chave_arquivo(raiz, a)) == folder_id:
+                ja_foram += 1
+            else:
+                arquivos.append(a)
+        if not arquivos:
+            if subindo:
+                raise RuntimeError("Estas fotos já estão sendo enviadas para o Drive. Acompanhe no painel de envios.")
+            raise RuntimeError("Estas fotos já foram enviadas para esta pasta do Drive.")
+        _em_envio.update(arquivos)
         _contador += 1
         job = {"id": _contador, "fotografo": fotografo or "Fotógrafo", "total": len(arquivos), "feitos": 0,
                "progresso": 0, "erros": 0, "estado": "fila", "destino": destino_nome, "atuais": [],
@@ -294,7 +309,7 @@ def iniciar_upload(link_pasta, fotografo=""):
         if not _worker_ativo:
             _worker_ativo = True
             threading.Thread(target=_worker, daemon=True).start()
-    return {"id": job["id"], "total": job["total"]}
+    return {"id": job["id"], "total": job["total"], "ignoradas": subindo + ja_foram}
 
 
 def limpar_concluidos():
@@ -327,7 +342,7 @@ def _enviar(job, creds, folder_id, arquivos, raiz=None):
             lote = pendentes[:]
             del pendentes[:]
         try:
-            core.marcar_enviados(raiz, lote)
+            core.marcar_enviados(raiz, lote, folder_id)
         except Exception as e:
             print(f"Erro ao registrar envios ao Drive: {e}")
     total = job["total"]
@@ -379,3 +394,6 @@ def _enviar(job, creds, folder_id, arquivos, raiz=None):
     except Exception as e:
         registrar(forcar=True)
         job.update(estado="erro", atuais=[], msg=f"Erro durante o envio: {e}")
+    finally:
+        with _lock_fila:
+            _em_envio.difference_update(arquivos)

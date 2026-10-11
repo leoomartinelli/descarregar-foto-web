@@ -425,6 +425,7 @@ async function vDescarregar() {
       if (t.estado === 'concluido' || t.estado === 'erro') {
         pararPoll();
         if (t.estado === 'erro') { await alerta('Erro', t.msg); W.step = 3; return vDescarregar(); }
+        if (t.aviso) await alerta('Atenção', t.aviso);
         W.step = 5; await render();
         if (t.revisaveis > 0 && await confirmar('Transferência Finalizada', `Foram transferidas ${t.revisaveis} foto(s) com sucesso!${t.falhas ? `\n(${t.falhas} arquivo(s) com erro de cópia — veja o log do servidor.)` : ''}\n\nDeseja iniciar a tela de seleção agora para revisar e apagar as fotos indesejadas?`)) abrirRevisor();
         else if (t.revisaveis === 0) alerta('Concluído', 'A cópia foi finalizada, mas nenhuma imagem compatível com revisão foi transferida.');
@@ -437,9 +438,16 @@ async function vDescarregar() {
     q('#b-abrir').onclick = () => api('/api/revisor/abrir-pasta', { body: {} }).catch(e => toast(e.message, true));
     q('#b-novo').onclick = async () => { await api('/api/transferencia/nova', { body: {} }); S.sel.nome = ''; S.sel.outro = ''; S.sel.driveManual = false; W.step = 1; W.pastas = []; S.oChave = null; await carregar(); vDescarregar(); };
     q('#s-drive').onchange = e => { S.sel.drive = e.target.value; S.sel.driveManual = true; };
-    q('#b-up').onclick = async () => {
+    q('#b-up').onclick = async ev => {
+      const btn = ev.currentTarget; if (btn.disabled) return;
+      btn.disabled = true;   // duplo clique nao envia duas vezes
       const o = optsDrive.find(x => x.r === S.sel.drive);
-      try { await api('/api/upload/iniciar', { body: { link: o ? o.l : '' } }); toast('Envio ao Drive iniciado em segundo plano.'); uploadsAtualiza(); } catch (e) { alerta('Upload', e.message); }
+      try {
+        const r = await api('/api/upload/iniciar', { body: { link: o ? o.l : '' } });
+        toast(r && r.ignoradas ? `Envio iniciado (${r.ignoradas} foto(s) já enviadas ou em envio foram puladas).` : 'Envio ao Drive iniciado em segundo plano.');
+        uploadsAtualiza();
+      } catch (e) { alerta('Upload', e.message); }
+      setTimeout(() => { btn.disabled = false; }, 1500);
     };
   }
 }

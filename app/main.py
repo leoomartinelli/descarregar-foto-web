@@ -17,7 +17,7 @@ app = FastAPI(title="Descarregador de Fotos - Web")
 
 # Endpoints publicos na rede local (protocolo Lider/Auxiliar). Todo o resto so aceita a propria maquina,
 # a menos que ALLOW_REMOTE_UI=1.
-ROTAS_LAN = {"/preset", "/stats", "/register", "/finalize"}
+ROTAS_LAN = {"/preset", "/stats", "/register", "/finalize", "/numeracao"}
 UPDATE = {"disponivel": False, "msg": ""}
 
 
@@ -556,6 +556,22 @@ def lan_register(d: dict = Body(...)):
         return Response(status_code=400)
     E.auxiliar_stations[d["ip"]] = {"nome": d["nome"], "port": d.get("port", 50007), "last_seen": time.time()}
     return {"status": "ok"}
+
+
+@app.post("/numeracao")
+def lan_numeracao(d: dict = Body(...)):
+    """Auxiliar pede o proximo numero livre do fotografo (sequencia unica entre os PCs)."""
+    if not E.active_servir:
+        return Response("No active servir event", status_code=404)
+    try:
+        chave, fot, qtd = str(d["chave"]), str(d["fotografo"]), int(d["quantidade"])
+    except (KeyError, ValueError, TypeError):
+        return Response(status_code=400)
+    raiz = core.raiz_servir(E.active_servir)
+    if os.path.isabs(chave) or ".." in chave.replace("\\", "/").split("/"):
+        return Response(status_code=400)
+    inicio = core.reservar_numeracao(raiz, chave, fot, qtd, d.get("maximo_local", 0))
+    return {"inicio": inicio}
 
 
 @app.post("/finalize")

@@ -6,7 +6,7 @@ import time
 
 import psutil
 
-from . import core, stats
+from . import core, lan, stats
 from .core import E
 
 
@@ -183,26 +183,22 @@ def iniciar(fotografo, destino_base, pastas, categoria, criar_subpasta, modo):
 
 def _copiar(fotografo, destino, base_fotografo, arquivos):
     import shutil
+    t0 = time.time()
     try:
         os.makedirs(destino, exist_ok=True)
         _ordenar_por_data(arquivos)
         total = len(arquivos)
-        digitos = max(3, len(str(total)))
-
-        inicio = 1
+        inicio, aviso = 1, None
         try:
-            prefixo = f"{fotografo}_"
-            numeros = []
-            for _, _, files in os.walk(base_fotografo):
-                for f in files:
-                    if f.startswith(prefixo):
-                        parte = os.path.splitext(f[len(prefixo):])[0].split('_')[0]
-                        if parte.isdigit():
-                            numeros.append(int(parte))
-            if numeros:
-                inicio = max(numeros) + 1
+            if E.active_servir:
+                inicio, aviso = lan.numero_inicial(core.raiz_servir(E.active_servir), base_fotografo, fotografo, total)
+            else:
+                inicio = core.maior_numero(base_fotografo, fotografo) + 1
         except Exception as e:
             print(f"Erro ao calcular offset de numeracao: {e}")
+        if aviso:
+            E.transfer["aviso"] = aviso
+        digitos = max(3, len(str(inicio + total)))
 
         lock = threading.Lock()
         copiados = []
@@ -240,6 +236,12 @@ def _copiar(fotografo, destino, base_fotografo, arquivos):
         E.arquivos_transferidos = transferidos
         if transferidos:
             core.registrar_historico(fotografo, base_fotografo, len(transferidos))
+        if copiados and E.active_servir:
+            try:
+                core.registrar_descarregamento(core.raiz_servir(E.active_servir), base_fotografo,
+                                               len(copiados), time.time() - t0)
+            except Exception as e:
+                print(f"Erro ao registrar tempo de descarregamento: {e}")
         falhas = total - len(copiados)
         E.transfer.update(estado="concluido", progresso=1,
                           msg=f"{len(copiados)} arquivo(s) copiados" + (f", {falhas} com erro (veja o log)" if falhas else ""),
