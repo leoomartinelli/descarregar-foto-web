@@ -261,6 +261,9 @@ def registrar_descarregamento(raiz, pasta_fotografo, fotos, segundos):
         atual = dados.setdefault(chave, {"fotos": 0, "segundos": 0.0})
         atual["fotos"] += fotos
         atual["segundos"] = round(atual["segundos"] + segundos, 1)
+        atual.setdefault("eventos", []).append({
+            "data_hora": time.strftime("%Y-%m-%d %H:%M:%S"), "fotos": fotos, "segundos": round(segundos, 1),
+            "estacao": platform.node() or "Estação"})
         with open(os.path.join(raiz, ARQ_DESCARREGAMENTOS), "w", encoding="utf-8") as f:
             json.dump(dados, f)
 
@@ -275,8 +278,8 @@ def formatar_duracao(segundos):
 
 
 def texto_voluntarios(voluntarios, info=None):
-    """Conteudo do voluntarios.txt: so os nomes, ou 'Nome - Descarregadas: N | No Drive: M | Tempo | Categoria: ... | Câmera: ... | Lente: ...' quando ha
-    'info' ({nome minusculo: {"descarregadas": n, "segundos": s, "fotos": n_no_disco, "drive": enviadas, "categorias": {nome: fotos}, "cameras": [...], "lentes": [...]}})."""
+    """Conteudo do voluntarios.txt: so os nomes, ou 'Nome - Descarregadas: N | No Drive: M | Categoria: ... | Câmera: ... | Lente: ...' quando ha
+    'info' ({nome minusculo: {"descarregadas": n, "fotos": n_no_disco, "drive": enviadas, "categorias": {nome: fotos}, "cameras": [...], "lentes": [...]}})."""
     if info is None:
         return "\n".join(voluntarios) + "\n"
     linhas = []
@@ -284,8 +287,6 @@ def texto_voluntarios(voluntarios, info=None):
         i = info.get(v.lower(), {})
         linha = f"{v} - Descarregadas: {i.get('descarregadas', i.get('fotos', 0))}" \
                 f" | No Drive: {i.get('drive', 0)}"
-        if i.get("segundos"):
-            linha += " | Tempo: " + formatar_duracao(i["segundos"])
         if i.get("categorias"):
             linha += " | Categoria: " + ", ".join(f"{c} ({n})" for c, n in sorted(i["categorias"].items()))
         if i.get("cameras"):

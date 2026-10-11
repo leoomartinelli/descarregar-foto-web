@@ -81,6 +81,7 @@ def obter_estatisticas_locais():
             destino_cat.append({"nome_fotografo": fotog, "total_fotos": total, "enviadas_drive": no_drive,
                                     "descarregadas": max(reg.get("fotos", 0), total),
                                     "segundos": reg.get("segundos", 0),
+                                    "descarregamentos": reg.get("eventos", []),
                                     "cameras": list(cams), "lentes": list(lentes)})
     return [{"nome": n, "fotografos": f} for n, f in categorias.items()]
 
@@ -99,10 +100,11 @@ def mesclar_estatisticas(stats_lider, stats_auxiliares):
                 if not fn:
                     continue
                 d = m.setdefault(fn, {"total_fotos": 0, "enviadas_drive": 0, "descarregadas": 0,
-                                                "segundos": 0, "cameras": set(), "lentes": set()})
+                                                "segundos": 0, "descarregamentos": [], "cameras": set(), "lentes": set()})
                 d["total_fotos"] += f.get("total_fotos", 0)
                 d["descarregadas"] += f.get("descarregadas", f.get("total_fotos", 0))
                 d["segundos"] += f.get("segundos", 0)
+                d["descarregamentos"].extend(f.get("descarregamentos", []))
                 d["enviadas_drive"] += f.get("enviadas_drive", 0)
                 d["cameras"].update(f.get("cameras", []))
                 d["lentes"].update(f.get("lentes", []))
@@ -113,6 +115,8 @@ def mesclar_estatisticas(stats_lider, stats_auxiliares):
     return [{"nome": cn, "fotografos": [
         {"nome_fotografo": n, "total_fotos": d["total_fotos"], "enviadas_drive": d["enviadas_drive"],
          "descarregadas": d["descarregadas"], "segundos": d["segundos"],
+         "vezes_descarregou": len(d["descarregamentos"]),
+         "descarregamentos": sorted(d["descarregamentos"], key=lambda e: e.get("data_hora", "")),
          "cameras": list(d["cameras"]), "lentes": list(d["lentes"])} for n, d in fm.items()]}
         for cn, fm in mapa.items()]
 
@@ -122,11 +126,10 @@ def resumo_por_voluntario(categorias):
     info = {}
     for cat in categorias:
         for f in cat.get("fotografos", []):
-            i = info.setdefault(f["nome_fotografo"].strip().lower(), {"fotos": 0, "drive": 0, "descarregadas": 0, "segundos": 0,
+            i = info.setdefault(f["nome_fotografo"].strip().lower(), {"fotos": 0, "drive": 0, "descarregadas": 0,
                                                                     "cameras": set(), "lentes": set(), "categorias": {}})
             i["fotos"] += f.get("total_fotos", 0)
             i["descarregadas"] += f.get("descarregadas", f.get("total_fotos", 0))
-            i["segundos"] += f.get("segundos", 0)
             i["drive"] += f.get("enviadas_drive", 0)
             i["categorias"][cat["nome"]] = i["categorias"].get(cat["nome"], 0) + f.get("total_fotos", 0)
             i["cameras"].update(f.get("cameras", []))
