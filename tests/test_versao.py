@@ -60,3 +60,18 @@ def test_encerrar_so_na_propria_maquina(monkeypatch):
     monkeypatch.setattr(main.threading, "Timer", lambda t, fn, args: type("T", (), {"start": lambda s: chamado.append(t)})())
     assert celular.post("/api/encerrar").status_code == 403
     assert local.post("/api/encerrar").json() == {"ok": True} and chamado == [0.5]
+
+
+def test_programa_instalado_nao_chama_o_git(monkeypatch):
+    # no Windows cada chamada ao git abria um terminal: a tela consulta /api/state a cada 3 segundos
+    import subprocess
+    chamadas = []
+    monkeypatch.setattr(versao, "EMPACOTADO", True)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: chamadas.append(a) or 1 / 0)
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: chamadas.append(a) or 1 / 0)
+    for _ in range(3):
+        main._cache_reinicio["t"] = 0          # forca a verificacao de "precisa reiniciar"
+        assert local.get("/api/state").json()["precisa_reiniciar"] is False
+    monkeypatch.setattr(main, "verificar_release", lambda: None)
+    main.verificar_atualizacao()
+    assert chamadas == []

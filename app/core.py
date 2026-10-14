@@ -121,6 +121,10 @@ def obter_ip_local():
         s.close()
 
 
+# Windows: programas externos (git, xdg-open etc.) rodam sem abrir uma janela de terminal
+SEM_JANELA = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+
+
 def abrir_no_gerenciador(caminho):
     """Abre uma pasta no gerenciador de arquivos da maquina que roda o servidor."""
     if not caminho or not os.path.isdir(caminho):

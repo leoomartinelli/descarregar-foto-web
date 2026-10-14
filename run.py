@@ -106,9 +106,17 @@ def autoteste():
                     break
                 time.sleep(0.1)
             assert ja_aberto(porta), "servidor nao respondeu"
-            for rota in ("/", "/painel", "/painel/dados", "/api/state"):
+            import app.main as m
+            externos = []
+            # programa instalado nao pode abrir programas externos (no Windows cada um abre um terminal na tela)
+            sys.addaudithook(lambda ev, args: externos.append(args[:2]) if ev in ("subprocess.Popen", "os.system") else None)
+            for rota in ("/", "/painel", "/painel/dados", "/api/state", "/api/state"):
+                m._cache_reinicio["t"] = 0
                 with urllib.request.urlopen(f"http://127.0.0.1:{porta}{rota}", timeout=5) as r:
                     assert r.status == 200, rota
+            if EMPACOTADO:
+                assert not externos, f"abriu programa externo: {externos}"
+            return f"{len(externos)} programa(s) externo(s)"
         finally:
             srv.should_exit = True
 

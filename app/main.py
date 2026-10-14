@@ -23,10 +23,18 @@ ROTAS_LAN = {"/preset", "/stats", "/register", "/finalize", "/numeracao", "/ativ
 UPDATE = {"disponivel": False, "msg": "", "url": ""}
 
 
+def _git(*args, timeout=10):
+    return subprocess.run(["git", *args], cwd=core.BASE_DIR, capture_output=True, text=True, timeout=timeout,
+                          **core.SEM_JANELA)
+
+
 def _head():
+    # programa instalado: nao ha git (atualiza pelas Releases). Chamar o git no Windows abria um terminal a cada
+    # consulta da tela.
+    if versao.EMPACOTADO:
+        return None
     try:
-        r = subprocess.run(["git", "rev-parse", "HEAD"], cwd=core.BASE_DIR, capture_output=True, text=True, timeout=3)
-        return r.stdout.strip() or None
+        return _git("rev-parse", "HEAD", timeout=3).stdout.strip() or None
     except Exception:
         return None
 
@@ -651,10 +659,6 @@ def lan_atividade():
 
 
 # ======================= atualizacao via git =======================
-
-def _git(*args, timeout=10):
-    return subprocess.run(["git", *args], cwd=core.BASE_DIR, capture_output=True, text=True, timeout=timeout)
-
 
 def verificar_release():
     """Executavel: compara a versao com a ultima release publicada no GitHub."""
