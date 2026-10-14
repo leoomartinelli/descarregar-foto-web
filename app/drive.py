@@ -302,7 +302,7 @@ def iniciar_upload(link_pasta, fotografo=""):
         _contador += 1
         job = {"id": _contador, "fotografo": fotografo or "Fotógrafo", "total": len(arquivos), "feitos": 0,
                "progresso": 0, "erros": 0, "estado": "fila", "destino": destino_nome, "atuais": [],
-               "msg": "Na fila de envio..."}
+               "msg": "Na fila de envio...", "servir_id": (E.active_servir or {}).get("id")}
         E.uploads.append(job)
         del E.uploads[:-20]  # mantem so os 20 mais recentes
         _fila.put((job, creds, folder_id, arquivos, raiz))

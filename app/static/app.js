@@ -94,6 +94,29 @@ async function criarPastasDriveAuto(sv) {
   } catch (e) { toast('⚠️ Pastas no Drive: ' + e.message, true); }
 }
 
+// ---------- painel de acompanhamento: QR code que abre o painel em qualquer celular da mesma rede ----------
+async function mostrarQR() {
+  let info; try { info = await api('/api/painel/info'); } catch (e) { return toast(e.message, true); }
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal qr-modal"><h2>📱 Painel de acompanhamento</h2>
+    <p class="mut mini">Escaneie com o celular (conectado na <b>mesma rede</b> deste computador) para acompanhar quem está descarregando, os PCs livres e quem ainda falta.</p>
+    <div class="qr-box"><img id="qr-img" alt="QR code do painel"></div>
+    <div class="path" id="qr-url" style="text-align:center"></div>
+    ${info.ips.length > 1 ? `<p class="mut mini">Não abriu? Este computador tem mais de uma rede; escolha a que os celulares usam:</p><div class="chips" id="qr-ips">${info.ips.map((ip, i) => `<span class="chip" style="cursor:pointer" data-i="${i}">${esc(ip)}</span>`).join('')}</div>` : ''}
+    <div class="btns"><a id="qr-abrir" target="_blank" rel="noopener"><button class="cinza">Abrir painel aqui</button></a><button id="qr-ok">Fechar</button></div></div>`;
+  $modal.appendChild(bg);
+  const $ = x => bg.querySelector(x);
+  const usa = i => {
+    $('#qr-img').src = '/api/painel/qr.svg?ip=' + encodeURIComponent(info.ips[i]); $('#qr-url').textContent = info.urls[i]; $('#qr-abrir').href = info.urls[i];
+    bg.querySelectorAll('#qr-ips [data-i]').forEach(c => c.classList.toggle('sel', +c.dataset.i === i));
+  };
+  bg.querySelectorAll('#qr-ips [data-i]').forEach(c => c.onclick = () => usa(+c.dataset.i));
+  $('#qr-ok').onclick = () => bg.remove();
+  usa(0);
+}
+// conta para o painel que este PC esta ocupado (e por quem); falha aqui nunca atrapalha o descarregamento
+const avisarAtividade = voluntario => api('/api/atividade', { body: { acao: 'ocupar', voluntario } }).catch(() => { });
+
 // ---------- predefinicoes de categorias: janela so de SELECAO (o cadastro fica na tela "Predefinições") ----------
 async function abrirPredefinicoes(jaTem) {
   let lista; try { lista = await api('/api/predefinicoes'); } catch (e) { toast(e.message, true); return null; }
@@ -231,11 +254,11 @@ async function vHome() {
       const sv = editando ? await api('/api/servir/' + S.editId, { method: 'PUT', body }) : await api('/api/servir', { body });
       criarPastasDriveAuto(sv);
       if (editando) { toast('Dia do Servir editado com sucesso!'); S.editId = null; S.form = formVazio(); vHome(); }
-      else { S.form = formVazio(); S.entrou = true; ir('descarregar'); }
+      else { S.form = formVazio(); S.entrou = true; S.qr = true; ir('descarregar'); }
     } catch (e) { toast(e.message, true); }
   };
   if (editando) q('#b-canc').onclick = () => { S.editId = null; S.form = formVazio(); vHome(); };
-  qa('[data-at]').forEach(b => b.onclick = async () => { try { const sv = await api('/api/servir/' + b.dataset.at + '/ativar', { body: {} }); criarPastasDriveAuto(sv); S.entrou = true; ir('descarregar'); } catch (e) { toast(e.message, true); } });
+  qa('[data-at]').forEach(b => b.onclick = async () => { try { const sv = await api('/api/servir/' + b.dataset.at + '/ativar', { body: {} }); criarPastasDriveAuto(sv); S.entrou = true; S.qr = true; ir('descarregar'); } catch (e) { toast(e.message, true); } });
   qa('[data-ed]').forEach(b => b.onclick = () => {
     const d = dias.find(x => x.id === b.dataset.ed); S.editId = d.id;
     S.form = { nome: d.nome, voluntarios: [...d.voluntarios], pastas: [...(d.pastas_predefinidas || [])], drives: JSON.parse(JSON.stringify(d.drive_folders || [])), local: d.local_path || '', criarDrive: !!d.drive_criar_categorias };
@@ -331,7 +354,7 @@ async function vDescarregar() {
 
   $app.innerHTML = `<div class="wrap" style="max-width:760px">
   <div class="topbar"><div><h1>${sv ? '🙏 ' + esc(sv.nome) : '📂 Modo Avulso'}</h1><div class="mut mini">${sv ? 'Dia do Servir ativo' : 'Sem dia de servir'}</div></div>
-   <div class="acts">${sv ? '<button class="lar pq" id="b-raiz">📁 Pasta do Servir</button><button class="verm pq" id="b-fin">🏁 Finalizar Servir</button>' : ''}<button class="cinza pq" id="b-voltar">⬅ Início</button></div></div>
+   <div class="acts">${sv && st.rede.modo === 'lider' ? '<button class="pq" id="b-qr">📱 Painel (QR)</button>' : ''}${sv ? '<button class="lar pq" id="b-raiz">📁 Pasta do Servir</button><button class="verm pq" id="b-fin">🏁 Finalizar Servir</button>' : ''}<button class="cinza pq" id="b-voltar">⬅ Início</button></div></div>
   ${stepper}
   ${resumos.map(r => `<div class="resumo"><span>${r.t}</span>${editavel ? `<button class="pq cinza" data-ed="${r.k}">Alterar</button>` : ''}</div>`).join('')}
   <div class="card passo">${corpo}</div></div>`;
@@ -341,7 +364,9 @@ async function vDescarregar() {
   if (sv) {
     q('#b-raiz').onclick = () => api('/api/fs/abrir', { body: { path: S.sel.destP + '/' + sv.nome } }).catch(() => alerta('Informação', `A pasta raiz do servir '${sv.nome}' ainda não foi criada localmente.`));
     q('#b-fin').onclick = () => finalizarServir();
+    if (st.rede.modo === 'lider') { q('#b-qr').onclick = mostrarQR; if (S.qr) { S.qr = false; mostrarQR(); } }
   }
+  S.qr = false;
   $app.querySelectorAll('[data-ed]').forEach(b => b.onclick = () => { W.step = +b.dataset.ed; vDescarregar(); });
   const ir_ = n => { W.step = n; vDescarregar(); };
 
@@ -390,17 +415,18 @@ async function vDescarregar() {
     S.oChave = null; await atualizaOrigem();
     q('#o-man').onclick = async () => { const p = await escolherPasta('Selecione a pasta de origem das fotos (cartão ou pasta)', S.oUlt); if (p) { S.oUlt = p; try { await api('/api/origem', { body: { path: p } }); S.oChave = null; W.pastas = []; atualizaOrigem(); } catch (e) { toast(e.message, true); } } };
     q('#o-open').onclick = async () => { const o = await api('/api/origem'); if (o.caminho) api('/api/fs/abrir', { body: { path: o.caminho } }).catch(e => toast(e.message, true)); };
-    q('#w-next').onclick = () => ir_(2);
+    q('#w-next').onclick = () => { avisarAtividade(); ir_(2); };
     iniciarPoll(atualizaOrigem, 2000);
   }
   // ---- passo 2 ----
   if (W.step === 2) {
     if (sv) {
-      q('#s-fot').onchange = e => { S.sel.fot = e.target.value; q('#s-outro').classList.toggle('hidden', e.target.value !== 'Outro...'); if (e.target.value === 'Outro...') q('#s-outro').focus(); atualizaFinal(); };
+      avisarAtividade(nomeFot());
+      q('#s-fot').onchange = e => { S.sel.fot = e.target.value; if (e.target.value !== 'Outro...') avisarAtividade(nomeFot()); q('#s-outro').classList.toggle('hidden', e.target.value !== 'Outro...'); if (e.target.value === 'Outro...') q('#s-outro').focus(); atualizaFinal(); };
       q('#s-outro').oninput = e => { S.sel.outro = e.target.value; atualizaFinal(); };
       q('#s-cat').onchange = e => { S.sel.cat = e.target.value; atualizaFinal(); };
     } else { q('#s-nome').oninput = e => { S.sel.nome = e.target.value; }; q('#s-sub').onchange = e => { S.sel.sub = e.target.checked; }; q('#s-nome').focus(); }
-    const avancar = () => { if (!nomeOk()) { q('#s-erro').textContent = nomeFot() ? 'O nome não pode conter / \\ : * ? " < > |' : 'Selecione ou digite o nome do fotógrafo.'; return; } if (sv) iniciar(); else ir_(3); };
+    const avancar = () => { if (!nomeOk()) { q('#s-erro').textContent = nomeFot() ? 'O nome não pode conter / \\ : * ? " < > |' : 'Selecione ou digite o nome do fotógrafo.'; return; } avisarAtividade(nomeFot()); if (sv) iniciar(); else ir_(3); };
     q('#w-next').onclick = avancar; q('#w-back').onclick = () => ir_(1);
     $app.querySelectorAll('input[type=text]').forEach(i => i.onkeydown = e => { if (e.key === 'Enter') avancar(); });
     if (sv) atualizaFinal();

@@ -117,3 +117,8 @@ input[type=checkbox]:checked:disabled{background:var(--verde);border-color:var(-
 .pd-h label{cursor:pointer}
 #uploads .upfiles{font-size:.8rem;margin:2px 0 3px;font-family:ui-monospace,monospace}
 #uploads .upfiles div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.85}
+.qr-modal{white-space:normal;max-width:420px;text-align:center}
+.qr-modal .btns{justify-content:center}
+.qr-box{background:#fff;border-radius:12px;padding:10px;margin:10px auto;width:min(300px,100%)}
+.qr-box img{display:block;width:100%;height:auto;image-rendering:pixelated}
+.chip.sel{border-color:var(--azul);outline:1px solid var(--azul)}

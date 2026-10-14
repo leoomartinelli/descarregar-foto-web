@@ -6,7 +6,7 @@ import time
 
 import psutil
 
-from . import core, lan, stats
+from . import core, lan, painel, stats
 from .core import E
 
 
@@ -177,6 +177,7 @@ def iniciar(fotografo, destino_base, pastas, categoria, criar_subpasta, modo):
     E.arquivos_transferidos = []
     E.transfer = {"estado": "rodando", "progresso": 0, "total": len(arquivos), "feitos": 0,
                   "msg": "Copiando...", "destino": destino}
+    painel.copiando(fotografo)
     threading.Thread(target=_copiar, args=(fotografo, destino, base_fotografo, arquivos), daemon=True).start()
     return {"total": len(arquivos), "destino": destino}
 
@@ -246,9 +247,11 @@ def _copiar(fotografo, destino, base_fotografo, arquivos):
         E.transfer.update(estado="concluido", progresso=1,
                           msg=f"{len(copiados)} arquivo(s) copiados" + (f", {falhas} com erro (veja o log)" if falhas else ""),
                           revisaveis=len(transferidos), falhas=falhas)
+        painel.concluido()
         stats.atualizar_voluntarios_em_segundo_plano()
     except Exception as e:
         E.transfer.update(estado="erro", msg=str(e))
+        painel.erro_copia()
 
 
 def _gravar_markers(copiados):

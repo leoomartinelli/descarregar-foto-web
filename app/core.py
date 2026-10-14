@@ -74,6 +74,8 @@ class Estado:
         self.auxiliar_stations = {}
         self.lider_detectado = None
         self.servir_finalizado_remotamente = False
+        # o que esta estacao esta fazendo agora (painel do QR code): livre ou ocupado por um voluntario
+        self.atividade = {"estado": "livre"}
         # jobs em background
         self.transfer = {"estado": "idle", "progresso": 0, "total": 0, "feitos": 0, "msg": ""}
         self.uploads = []  # fila/historico de envios ao Drive (cada um e um "job")
@@ -358,6 +360,7 @@ def criar_estrutura_servir(servir):
 def ativar_servir(servir):
     E.active_servir = servir
     E.arquivos_transferidos = []
+    E.atividade = {"estado": "livre"}
     if servir:
         lp = servir.get("local_path")
         E.destino_base = lp if lp and os.path.isdir(lp) else DEFAULT_DEST

@@ -9,7 +9,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import core, drive, lan, review, stats, transfer
+from . import core, drive, lan, painel, review, stats, transfer
 from .core import E
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -17,7 +17,8 @@ app = FastAPI(title="Descarregador de Fotos - Web")
 
 # Endpoints publicos na rede local (protocolo Lider/Auxiliar). Todo o resto so aceita a propria maquina,
 # a menos que ALLOW_REMOTE_UI=1.
-ROTAS_LAN = {"/preset", "/stats", "/register", "/finalize", "/numeracao"}
+# /painel e /painel/dados: painel de acompanhamento aberto pelo QR code (somente leitura); /atividade: status do PC
+ROTAS_LAN = {"/preset", "/stats", "/register", "/finalize", "/numeracao", "/atividade", "/painel", "/painel/dados"}
 UPDATE = {"disponivel": False, "msg": ""}
 
 
@@ -201,7 +202,7 @@ def _registrar_pastas_drive(sid, resultado):
 
 @app.post("/api/avulso")
 def modo_avulso():
-    core.ativar_servir(None)
+    core.ativar_servir(None)   # tambem libera o PC no painel
     return {"ok": True}
 
 
@@ -368,6 +369,7 @@ def status_transferencia():
 def nova_transferencia():
     E.arquivos_transferidos = []
     E.transfer = {"estado": "idle", "progresso": 0, "total": 0, "feitos": 0, "msg": ""}
+    painel.liberar()
     # os envios ao Drive em andamento NAO sao tocados: continuam em segundo plano
     return {"ok": True}
 
@@ -435,9 +437,13 @@ def revisor_abrir_pasta(d: dict = Body(default={})):
 @app.post("/api/upload/iniciar")
 def upload_iniciar(d: dict = Body(default={})):
     try:
-        return drive.iniciar_upload(d.get("link", ""), E.sessao_fotografo or "")
+        r = drive.iniciar_upload(d.get("link", ""), E.sessao_fotografo or "")
     except RuntimeError as e:
         erro(str(e))
+    # o envio roda em segundo plano: o voluntario terminou e o PC ja fica livre para o proximo
+    painel.liberar()
+    painel.limpar_cache()
+    return r
 
 
 @app.get("/api/uploads")
@@ -579,6 +585,53 @@ def lan_finalize():
     core.ativar_servir(None)
     E.servir_finalizado_remotamente = True
     return {"status": "ok"}
+
+
+# ======================= painel de acompanhamento (QR code) =======================
+
+@app.post("/api/atividade")
+def atividade(d: dict = Body(...)):
+    """A tela avisa quando o voluntario comeca (escolheu as fotos do cartao) e quem ele e; 'liberar' deixa o PC livre."""
+    if d.get("acao") == "liberar":
+        painel.liberar()
+    else:
+        painel.ocupar(d.get("voluntario"))
+    painel.limpar_cache()
+    return E.atividade
+
+
+@app.get("/api/painel/info")
+def painel_info():
+    ips = painel.ips_locais()
+    return {"urls": [painel.url_painel(ip) for ip in ips], "ips": ips, "modo": E.network_mode}
+
+
+@app.get("/api/painel/qr.svg")
+def painel_qr(ip: str = ""):
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        ip = painel.ips_locais()[0]
+    try:
+        svg = painel.qr_svg(painel.url_painel(ip))
+    except ImportError:
+        erro("Biblioteca 'segno' não instalada (pip install -r requirements.txt).", 500)
+    return Response(svg, media_type="image/svg+xml", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/painel")
+def painel_pagina():
+    return FileResponse(painel.PAGINA, media_type="text/html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/painel/dados")
+def painel_dados():
+    return painel.dados_painel()
+
+
+@app.get("/atividade")
+def lan_atividade():
+    return painel.atividade_local()
 
 
 # ======================= atualizacao via git =======================

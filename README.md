@@ -22,6 +22,7 @@ Copie `.env-example` para `.env` se quiser definir credenciais do Google, webhoo
 | Pastas do Drive e pastas locais do dia | Painel → Config Drive |
 | Histórico | Painel → Histórico |
 | Rede local Líder/Auxiliar (UDP 50008 + HTTP 50007) e Finalizar Servir (webhook) | Painel / `app/lan.py` |
+| Painel de acompanhamento pelo celular (QR code ao iniciar o Servir): PCs livres/ocupados, quem está descarregando e há quanto tempo, quem já descarregou e quem falta | `app/painel.py` / `/painel` |
 | Atualização via Git (aviso na tela, `git pull` com um clique) | `app/main.py` |
 
 A rede local usa o **mesmo protocolo** do app desktop (`/preset`, `/stats`, `/register`, `/finalize`),
@@ -29,9 +30,16 @@ então estações desktop e web podem trabalhar juntas.
 
 ## Segurança
 O servidor escuta em `0.0.0.0` somente para a rede local Líder/Auxiliar. Por padrão, **apenas a própria máquina**
-acessa a interface e a API (`/api/*`); de outros computadores só os 4 endpoints do protocolo de rede respondem.
+acessa a interface e a API (`/api/*`); de outros computadores só respondem os endpoints do protocolo de rede (`/preset`, `/stats`, `/register`,
+`/finalize`, `/numeracao`, `/atividade`) e o painel somente leitura (`/painel`, `/painel/dados`).
 Para liberar a interface na rede (ex.: usar de um tablet) defina `ALLOW_REMOTE_UI=1` — só em rede confiável,
 pois a interface lê e apaga arquivos do disco.
+
+## Testes
+```bash
+.venv/bin/pip install pytest httpx
+.venv/bin/python -m pytest tests -q
+```
 
 ## Estrutura
 ```
@@ -39,5 +47,6 @@ app/core.py      estado, caminhos, JSON, regras de destino      app/stats.py   E
 app/transfer.py  cartão, plano e cópia                          app/review.py  JPEG para o revisor (RAW via rawpy)
 app/drive.py     Google Drive                                   app/lan.py     rede local e webhook
 app/main.py      API FastAPI                                    app/static/    interface (HTML/CSS/JS)
+app/painel.py    painel de acompanhamento (QR code)
 ```
 Dados do usuário ficam em `data/` e as fotos em `Fotos_Sistema/` (ambos fora do Git).

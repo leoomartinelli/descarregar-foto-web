@@ -7,3 +7,4 @@ requests>=2.31
 google-api-python-client>=2.197.0
 google-auth-httplib2>=0.2.0
 google-auth-oauthlib>=1.2.0
+segno>=1.5
