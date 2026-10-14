@@ -112,6 +112,7 @@ def test_retomar_antigo_e_ignorado():
 
 
 def test_scripts_de_instalacao(monkeypatch):
+    monkeypatch.setattr(atualizador.os.path, "realpath", lambda p: p)   # caminho de Mac, mesmo rodando no Windows
     monkeypatch.setattr(atualizador.sys, "executable", "/Applications/Descarregador de Fotos.app/Contents/MacOS/DescarregadorDeFotos")
     mac = atualizador._script_unix("macos", "/tmp/novo.dmg")
     assert "APP='/Applications/Descarregador de Fotos.app'" in mac and "--sem-navegador" in mac
