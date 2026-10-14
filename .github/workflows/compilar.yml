@@ -183,6 +183,8 @@ jobs:
           sudo apt-get install -y ./saida/*.deb
           test -f /usr/share/applications/descarregador-de-fotos.desktop
           dpkg-query -W -f='${Version}\n' descarregador-de-fotos | grep -qx "$VERSAO"
+          # firewall (ufw) liberado pela instalacao, como o instalador do Windows faz
+          if command -v ufw >/dev/null; then sudo ufw show added | tee /dev/stderr | grep -q "Descarregador de Fotos"; fi
           descarregador-de-fotos --autoteste
       - name: Instalar e testar (macOS)
         if: runner.os == 'macOS'

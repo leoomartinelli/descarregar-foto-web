@@ -103,7 +103,17 @@ def sincronizar_com_lider():
     if not E.lider_detectado:
         raise RuntimeError("Nenhum lider detectado na rede.")
     ip, port = E.lider_detectado["ip"], E.lider_detectado["port"]
-    r = registrar_no_lider()
+    try:
+        r = registrar_no_lider()
+    except requests.exceptions.ConnectTimeout:
+        # o anuncio (UDP) chegou, mas a conexao (TCP) nao: e o firewall do PC lider descartando
+        raise RuntimeError(
+            f"O líder ({ip}) foi encontrado, mas não aceitou a conexão na porta {port}: o firewall do "
+            "computador líder está bloqueando. No PC líder — Windows: instale o programa pelo instalador (ele "
+            "libera o firewall). Linux: rode no terminal  sudo ufw allow 50007/tcp  e  sudo ufw allow 50008/udp . "
+            "Mac: permita as conexões de entrada quando o macOS perguntar.") from None
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError(f"O líder ({ip}) não respondeu: confira se o programa está aberto no PC líder.") from None
     if r.status_code != 200:
         raise RuntimeError(f"Não foi possível se registrar no líder: código {r.status_code}")
     r = requests.get(f"http://{ip}:{port}/preset", timeout=3.0)

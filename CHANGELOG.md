@@ -22,7 +22,9 @@ Primeira versão com instaladores para Windows, macOS e Linux.
 - Painel e lista de estações avisam quando um PC está numa versão diferente da do líder.
 - Painel de acompanhamento em tempo real pelo QR code: PCs livres/ocupados, quem está descarregando e há quanto
   tempo, quem já descarregou, quem falta e os envios ao Drive de todos os PCs.
-- No Windows o instalador libera o programa no Firewall (rede local Líder/Auxiliar e painel no celular).
+- No Windows o instalador libera o programa no Firewall e no Linux o `.deb` libera as portas no ufw (rede local
+  Líder/Auxiliar e painel no celular).
+- Auxiliar explica o que fazer quando o firewall do líder bloqueia a conexão.
 - O líder anuncia na rede de cada placa (Mac e Windows com VPN não achavam o líder).
 - Auxiliares se registram de novo no líder de tempos em tempos (o líder volta a vê-los depois de reiniciar).
 
