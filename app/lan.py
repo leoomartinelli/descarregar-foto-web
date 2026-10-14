@@ -9,7 +9,7 @@ import time
 
 import requests
 
-from . import core, stats
+from . import core, painel, stats
 from .core import E
 from .versao import VERSAO
 
@@ -22,15 +22,16 @@ def _transmitir(gen):
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     sock.settimeout(1.0)
     while gen == _geracao and E.network_mode == "lider":
-        if not E.active_servir:
+        sv = E.active_servir
+        if not sv:
             time.sleep(2.0)
             continue
-        try:
-            msg = f"SERVIR_LEADER:{core.obter_ip_local()}:{E.local_port}:" \
-                  f"{E.active_servir.get('nome', 'Servir')}:{E.active_servir.get('id', '0')}"
-            sock.sendto(msg.encode(), ('<broadcast>', UDP_PORT))
-        except Exception as e:
-            print(f"Erro no broadcast UDP: {e}")
+        msg = f"SERVIR_LEADER:{core.obter_ip_local()}:{E.local_port}:{sv.get('nome', 'Servir')}:{sv.get('id', '0')}"
+        for destino in ['<broadcast>'] + painel.enderecos_broadcast():
+            try:
+                sock.sendto(msg.encode(), (destino, UDP_PORT))
+            except Exception as e:
+                print(f"Erro no broadcast UDP ({destino}): {e}")
         time.sleep(3.0)
     sock.close()
 

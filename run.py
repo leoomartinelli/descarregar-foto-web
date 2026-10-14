@@ -137,6 +137,7 @@ def main():
         log_em_arquivo()
     carregar_env()
     porta = int(os.environ.get("PORT", PORT))
+    print(f"Iniciando na porta {porta} (pasta de dados: {BASE})")
     if ja_aberto(porta):
         if os.environ.get("NO_BROWSER") != "1":
             webbrowser.open(f"http://localhost:{porta}")
@@ -156,4 +157,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        # no executavel sem janela um erro nao tratado abriria uma caixa de dialogo e o programa ficaria parado
+        import traceback
+        os.makedirs(BASE, exist_ok=True)
+        with open(os.path.join(BASE, "descarregador.log"), "a", encoding="utf-8") as f:
+            f.write(f"ERRO ao iniciar v{VERSAO}:\n{traceback.format_exc()}\n")
+        sys.exit(1)

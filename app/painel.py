@@ -96,9 +96,9 @@ _VIRTUAIS = ("docker", "br-", "veth", "virbr", "vmnet", "vboxnet", "tun", "tap",
              "vEthernet", "VirtualBox", "VMware", "Hyper-V")
 
 
-def ips_locais():
-    """IPv4 desta maquina alcancaveis na rede local; o da rota principal primeiro."""
-    ips = []
+def interfaces_locais():
+    """[(ip, mascara)] IPv4 desta maquina nas redes locais de verdade (sem loopback, Docker, VMs e VPN)."""
+    saida = []
     status = psutil.net_if_stats()
     for nome, addrs in psutil.net_if_addrs().items():
         if nome.startswith(_VIRTUAIS) or any(v in nome for v in _VIRTUAIS[-4:]) or \
@@ -111,13 +111,33 @@ def ips_locais():
                 ip = ipaddress.ip_address(a.address)
             except ValueError:
                 continue
-            if not (ip.is_loopback or ip.is_link_local) and a.address not in ips:
-                ips.append(a.address)
+            if not (ip.is_loopback or ip.is_link_local) and a.address not in (x[0] for x in saida):
+                saida.append((a.address, a.netmask))
+    return saida
+
+
+def ips_locais():
+    """IPv4 desta maquina alcancaveis na rede local; o da rota principal primeiro."""
+    ips = [ip for ip, _ in interfaces_locais()]
     principal = core.obter_ip_local()
     if principal in ips:
         ips.remove(principal)
         ips.insert(0, principal)
     return ips or [principal]
+
+
+def enderecos_broadcast():
+    """Broadcast de cada rede local (ex.: 192.168.15.255). O 255.255.255.255 sai por uma interface so no macOS e no
+    Windows com varias placas (VPN, VirtualBox); mandar para cada rede garante que os auxiliares achem o lider."""
+    saida = []
+    for ip, mascara in interfaces_locais():
+        try:
+            rede = ipaddress.IPv4Network(f"{ip}/{mascara or '255.255.255.0'}", strict=False)
+        except ValueError:
+            continue
+        if rede.prefixlen < 31 and str(rede.broadcast_address) not in saida:
+            saida.append(str(rede.broadcast_address))
+    return saida
 
 
 def url_painel(ip):
