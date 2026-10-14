@@ -67,6 +67,8 @@ function escolherPasta(titulo, inicio) {
 
 async function carregar() { S.st = await api('/api/state'); const b = document.getElementById('banner'); const u = S.st.update;
   if (S.st.precisa_reiniciar) { b.classList.remove('hidden'); b.style.background = 'var(--lar)'; b.innerHTML = '⚠️ O programa foi atualizado. <b>Feche o servidor (Ctrl+C no terminal) e abra de novo</b> (rodar.sh / rodar.bat) para aplicar as mudanças.'; }
+  else if (u && u.disponivel && u.url) { b.style.background = ''; b.classList.remove('hidden');   // programa instalado: baixa o novo instalador
+    b.innerHTML = `${esc(u.msg)} <button id="b-up">⬇ Baixar nova versão</button>`; document.getElementById('b-up').onclick = () => window.open(u.url, '_blank'); }
   else if (u && u.disponivel) { b.style.background = ''; b.classList.remove('hidden'); b.innerHTML = `${esc(u.msg)} <button id="b-up">Atualizar agora</button>`;
     document.getElementById('b-up').onclick = async () => { try { const r = await api('/api/update/aplicar', { body: {} }); toast(r.msg); b.classList.add('hidden'); } catch (e) { toast(e.message, true); } };
   } else b.classList.add('hidden'); }
@@ -195,8 +197,8 @@ async function vHome() {
   const dias = await api('/api/servir'); const f = S.form; const editando = !!S.editId;
   const r = st.rede;
   $app.innerHTML = `<div class="wrap">
-  <div class="topbar"><h1>📸 Descarregador de Fotos — Painel Inicial</h1>
-   <div class="acts"><button data-go="google">🔑 Login Google</button><button data-go="predef">📋 Predefinições</button><button data-go="historico">📊 Histórico</button><button data-go="drive">⚙️ Config Drive</button></div></div>
+  <div class="topbar"><div><h1>📸 Descarregador de Fotos — Painel Inicial</h1><div class="mut mini">Versão ${esc(st.versao)}</div></div>
+   <div class="acts"><button data-go="google">🔑 Login Google</button><button data-go="predef">📋 Predefinições</button><button data-go="historico">📊 Histórico</button><button data-go="drive">⚙️ Config Drive</button><button class="verm" id="b-sair" title="Fecha o programa neste computador">⏻ Encerrar</button></div></div>
   <div class="grid"><div>
     <div class="card"><h2 class="${editando ? 'warn' : 'ok'}">${editando ? '✏️ Editando Dia do Servir' : 'Criar Novo Dia do Servir'}</h2>
      <label>Nome do Servir</label><input type="text" id="f-nome" value="${esc(f.nome)}" placeholder="Ex.: Culto de Domingo">
@@ -223,7 +225,7 @@ async function vHome() {
     <div class="card"><h2>🌐 Rede Local (várias estações)</h2>
      <div class="row"><select id="n-modo"><option value="lider" ${r.modo === 'lider' ? 'selected' : ''}>Estação Líder</option><option value="auxiliar" ${r.modo === 'auxiliar' ? 'selected' : ''}>Estação Auxiliar</option></select><button class="fix cinza" id="n-rein">Reiniciar rede</button></div>
      <p class="mut mini">Este computador: ${esc(r.ip)}:${r.porta}</p>
-     ${r.modo === 'lider' ? `<h3>Estações conectadas</h3>${r.auxiliares.map(a => `<div class="item"><span>💻 ${esc(a.nome)} (${esc(a.ip)})</span><span class="ok mini">🟢 Conectado</span></div>`).join('') || '<p class="mut mini">Nenhuma estação conectada. Ative um Servir para transmitir na rede.</p>'}`
+     ${r.modo === 'lider' ? `<h3>Estações conectadas</h3>${r.auxiliares.map(a => `<div class="item"><span>💻 ${esc(a.nome)} (${esc(a.ip)}) <span class="mini ${a.versao === st.versao ? 'mut' : 'warn'}">${a.versao ? 'v' + esc(a.versao) : 'versão desconhecida'}${a.versao === st.versao ? '' : ' ⚠️ diferente deste PC (v' + esc(st.versao) + ') — atualize'}</span></span><span class="ok mini">🟢 Conectado</span></div>`).join('') || '<p class="mut mini">Nenhuma estação conectada. Ative um Servir para transmitir na rede.</p>'}`
       : (r.lider ? `<p class="ok">🟢 LÍDER ENCONTRADO!</p><p>Evento: <b>${esc(r.lider.nome_evento)}</b><br><span class="mut mini">Líder IP: ${esc(r.lider.ip)}:${r.lider.port}</span></p><button class="verde" id="n-sync">🔗 Conectar e Sincronizar</button>`
         : '<p class="warn">🔍 Procurando Líder na rede local...</p>')}
     </div></div></div></div>`;
@@ -270,6 +272,12 @@ async function vHome() {
       await api('/api/servir/' + d.id, { method: 'DELETE' }); vHome();
     }
   });
+  q('#b-sair').onclick = async () => {
+    if (!await confirmar('Encerrar programa', 'Fechar o Descarregador de Fotos neste computador?\n\nEnvios ao Drive em andamento serão interrompidos. Para abrir de novo, clique no ícone do programa.', 'Encerrar', 'Cancelar')) return;
+    try { await api('/api/encerrar', { body: {} }); } catch (e) { }
+    pararPoll(); $app.innerHTML = '<div class="wrap"><div class="card"><h2>Programa encerrado</h2><p class="mut">Pode fechar esta aba. Para abrir de novo, clique no ícone do Descarregador de Fotos.</p></div></div>';
+    S.encerrado = true;
+  };
   q('#b-avulso').onclick = async () => { await api('/api/avulso', { body: {} }); S.avulso = true; S.entrou = true; ir('descarregar'); };
   q('#n-modo').onchange = async e => { ler(); await api('/api/rede/modo', { body: { modo: e.target.value } }); await carregar(); vHome(); };
   q('#n-rein').onclick = async () => { await api('/api/rede/reiniciar', { body: {} }); toast('Serviços de rede local reiniciados com sucesso!'); await carregar(); vHome(); };
@@ -388,8 +396,14 @@ async function vDescarregar() {
           if (!await confirmar('Fotos Já Descarregadas', `Atenção: Foram detectadas ${plano.ja_descarregados} fotos já descarregadas anteriormente nesta pasta.\n\nDeseja descarregar apenas as ${plano.novas} novas fotos tiradas após o último descarregamento?\n(Se selecionar 'Não', todas as ${plano.todas} fotos serão copiadas).`)) modo = 'todas';
         }
         const temRaw = modo === 'novas' ? plano.tem_raw_novas : plano.tem_raw;
-        if (temRaw && !await confirmar('Fotos em RAW Detectadas', 'Atenção: Foram detectadas fotos em formato RAW (.cr3, .cr2, .nef, .arw) nas pastas selecionadas.\n\nElas serão copiadas no formato original. Deseja prosseguir com o descarregamento?')) return;
-        await api('/api/transferencia/iniciar', { body: { ...body, modo } });
+        let converter_raw = false;
+        if (temRaw && plano.pode_converter_raw) {
+          const r = await modal(`<h2>Fotos em RAW Detectadas</h2>${esc('Tem fotos em RAW (.cr3, .cr2, .nef, .arw) no meio das selecionadas.\n\nDeseja transformar RAW em JPEG?\n\nOs JPEGs saem na resolução total. No computador fica só o JPEG (o RAW copiado é apagado depois de convertido). O cartão não é alterado.')}`,
+            [{ t: 'Cancelar', v: null, c: 'cinza' }, { t: 'Manter em RAW', v: false, c: 'cinza' }, { t: 'Transformar em JPEG', v: true }]);
+          if (r === null) return;
+          converter_raw = r;
+        } else if (temRaw && !await confirmar('Fotos em RAW Detectadas', 'Atenção: Foram detectadas fotos em formato RAW (.cr3, .cr2, .nef, .arw) nas pastas selecionadas.\n\nElas serão copiadas no formato original. Deseja prosseguir com o descarregamento?')) return;
+        await api('/api/transferencia/iniciar', { body: { ...body, modo, converter_raw } });
         ir_(4);
       } catch (e) { toast(e.message, true); }
   }
@@ -447,13 +461,13 @@ async function vDescarregar() {
   if (W.step === 4) {
     iniciarPoll(async () => {
       const t = await api('/api/transferencia/status'); const pg = q('#pg'); if (!pg) return;
-      pg.value = t.progresso; q('#pg-t').textContent = `${Math.round(t.progresso * 100)}% (${t.feitos}/${t.total})`;
+      pg.value = t.progresso; q('#pg-t').textContent = `${t.fase === 'convertendo' ? 'Convertendo RAW para JPEG · ' : ''}${Math.round(t.progresso * 100)}% (${t.feitos}/${t.total})`;
       if (t.estado === 'concluido' || t.estado === 'erro') {
         pararPoll();
         if (t.estado === 'erro') { await alerta('Erro', t.msg); W.step = 3; return vDescarregar(); }
         if (t.aviso) await alerta('Atenção', t.aviso);
         W.step = 5; await render();
-        if (t.revisaveis > 0 && await confirmar('Transferência Finalizada', `Foram transferidas ${t.revisaveis} foto(s) com sucesso!${t.falhas ? `\n(${t.falhas} arquivo(s) com erro de cópia — veja o log do servidor.)` : ''}\n\nDeseja iniciar a tela de seleção agora para revisar e apagar as fotos indesejadas?`)) abrirRevisor();
+        if (t.revisaveis > 0 && await confirmar('Transferência Finalizada', `Foram transferidas ${t.revisaveis} foto(s) com sucesso!${t.falhas ? `\n(${t.falhas} arquivo(s) com erro de cópia — veja o log do servidor.)` : ''}${t.falhas_raw ? `\n(${t.falhas_raw} RAW não puderam ser convertidos e ficaram em RAW — veja o log do servidor.)` : ''}\n\nDeseja iniciar a tela de seleção agora para revisar e apagar as fotos indesejadas?`)) abrirRevisor();
         else if (t.revisaveis === 0) alerta('Concluído', 'A cópia foi finalizada, mas nenhuma imagem compatível com revisão foi transferida.');
       }
     }, 600);
@@ -678,5 +692,36 @@ async function uploadsAtualiza() {
   } catch (e) { }
 }
 setInterval(uploadsAtualiza, 1500); uploadsAtualiza();
+
+// ---------- atualizacao automatica (programa instalado) ----------
+// o programa fecha e reabre na versao nova sozinho; a tela mostra o andamento e recarrega quando ele volta
+const $atu = document.createElement('div'); $atu.className = 'banner hidden'; document.body.prepend($atu);
+let verVista = null, instalando = false, semConexao = false;
+function bannerAtualizacao(a) {
+  const mostrar = a && ['pronta', 'instalando', 'manual'].includes(a.estado);
+  $atu.classList.toggle('hidden', !mostrar); if (!mostrar) return;
+  $atu.style.background = a.estado === 'instalando' ? 'var(--lar)' : '';
+  $atu.innerHTML = (a.estado === 'instalando' ? '🔄 ' : a.estado === 'pronta' ? '⬇️ ' : '') + esc(a.msg) +
+    (a.estado === 'manual' && a.url ? ' <button id="atu-baixar">⬇ Baixar</button>' : '');
+  const b = $atu.querySelector('#atu-baixar'); if (b) b.onclick = () => window.open(a.url, '_blank');
+}
+async function vigiaAtualizacao() {
+  if (S.encerrado) return;
+  try {
+    const st = await api('/api/state');
+    if (verVista && st.versao !== verVista) {         // voltou na versao nova: recarrega a tela
+      try { if (S.entrou) sessionStorage.setItem('voltarDescarregar', '1'); } catch (e) { }
+      return location.reload();
+    }
+    verVista = st.versao; instalando = st.atualizacao && st.atualizacao.estado === 'instalando';
+    bannerAtualizacao(st.atualizacao);
+    if (semConexao) { semConexao = false; render(); }  // o programa voltou (mesma versao, se a instalacao falhou)
+  } catch (e) {
+    semConexao = true;
+    if (instalando) bannerAtualizacao({ estado: 'instalando', msg: 'Atualizando o programa… a tela volta sozinha em instantes.' });
+  }
+}
+setInterval(vigiaAtualizacao, 4000); vigiaAtualizacao();
+try { if (sessionStorage.getItem('voltarDescarregar')) { sessionStorage.removeItem('voltarDescarregar'); S.entrou = true; } } catch (e) { }
 
 render();

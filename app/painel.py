@@ -16,6 +16,7 @@ import requests
 
 from . import core
 from .core import E
+from .versao import VERSAO
 
 TIMEOUT_AUX = 1.5
 _cache = {"t": 0.0, "dados": None}
@@ -75,7 +76,7 @@ def atividade_local():
         a["segundos"] = round(time.time() - E.atividade.get("inicio_ts", time.time()), 1)
         if a.get("fase") == "copiando":
             a["feitos"], a["total"] = E.transfer.get("feitos", 0), E.transfer.get("total", 0)
-    return {"nome": platform.node() or "Estação", "servir_id": (E.active_servir or {}).get("id"),
+    return {"nome": platform.node() or "Estação", "versao": VERSAO, "servir_id": (E.active_servir or {}).get("id"),
             "atividade": a, "descarregados": resumo_descarregamentos(), "uploads": uploads_locais()}
 
 
@@ -95,9 +96,9 @@ _VIRTUAIS = ("docker", "br-", "veth", "virbr", "vmnet", "vboxnet", "tun", "tap",
              "vEthernet", "VirtualBox", "VMware", "Hyper-V")
 
 
-def ips_locais():
-    """IPv4 desta maquina alcancaveis na rede local; o da rota principal primeiro."""
-    ips = []
+def interfaces_locais():
+    """[(ip, mascara)] IPv4 desta maquina nas redes locais de verdade (sem loopback, Docker, VMs e VPN)."""
+    saida = []
     status = psutil.net_if_stats()
     for nome, addrs in psutil.net_if_addrs().items():
         if nome.startswith(_VIRTUAIS) or any(v in nome for v in _VIRTUAIS[-4:]) or \
@@ -110,13 +111,33 @@ def ips_locais():
                 ip = ipaddress.ip_address(a.address)
             except ValueError:
                 continue
-            if not (ip.is_loopback or ip.is_link_local) and a.address not in ips:
-                ips.append(a.address)
+            if not (ip.is_loopback or ip.is_link_local) and a.address not in (x[0] for x in saida):
+                saida.append((a.address, a.netmask))
+    return saida
+
+
+def ips_locais():
+    """IPv4 desta maquina alcancaveis na rede local; o da rota principal primeiro."""
+    ips = [ip for ip, _ in interfaces_locais()]
     principal = core.obter_ip_local()
     if principal in ips:
         ips.remove(principal)
         ips.insert(0, principal)
     return ips or [principal]
+
+
+def enderecos_broadcast():
+    """Broadcast de cada rede local (ex.: 192.168.15.255). O 255.255.255.255 sai por uma interface so no macOS e no
+    Windows com varias placas (VPN, VirtualBox); mandar para cada rede garante que os auxiliares achem o lider."""
+    saida = []
+    for ip, mascara in interfaces_locais():
+        try:
+            rede = ipaddress.IPv4Network(f"{ip}/{mascara or '255.255.255.0'}", strict=False)
+        except ValueError:
+            continue
+        if rede.prefixlen < 31 and str(rede.broadcast_address) not in saida:
+            saida.append(str(rede.broadcast_address))
+    return saida
 
 
 def url_painel(ip):
@@ -135,7 +156,7 @@ def qr_svg(texto):
 
 def _consultar_auxiliar(ip, info):
     est = {"nome": info.get("nome") or ip, "ip": ip, "papel": "auxiliar", "online": False, "atividade": None,
-           "descarregados": [], "uploads": []}
+           "descarregados": [], "uploads": [], "versao": info.get("versao")}
     try:
         r = requests.get(f"http://{ip}:{info.get('port', 50007)}/atividade", timeout=TIMEOUT_AUX)
     except Exception:
@@ -144,6 +165,7 @@ def _consultar_auxiliar(ip, info):
     if r.status_code == 200:
         d = r.json()
         est["atividade"] = d.get("atividade")
+        est["versao"] = d.get("versao") or est["versao"]
         # descarregamentos de outro Servir (auxiliar ainda nao sincronizou o atual) nao entram na conta
         if d.get("servir_id") == (E.active_servir or {}).get("id"):
             est["descarregados"] = d.get("descarregados") or []
@@ -161,6 +183,7 @@ def _montar():
         return {"modo": "lider", "servir": None}
     local = atividade_local()
     estacoes = [{"nome": local["nome"], "ip": core.obter_ip_local(), "papel": "lider", "online": True,
+                 "versao": VERSAO,
                  "atividade": local["atividade"], "descarregados": local["descarregados"],
                  "uploads": local["uploads"]}]
     aux = list(E.auxiliar_stations.items())
@@ -205,8 +228,11 @@ def _montar():
     return {
         "modo": "lider",
         "servir": {"id": servir.get("id"), "nome": servir.get("nome"), "data": servir.get("data_criacao")},
-        "estacoes": [{k: e.get(k) for k in ("nome", "ip", "papel", "online", "atividade", "sem_suporte")}
+        "estacoes": [{k: e.get(k) for k in ("nome", "ip", "papel", "online", "atividade", "sem_suporte", "versao")}
                      for e in estacoes],
+        # PCs com versao diferente da do lider (ou que nao informam a versao): podem nao se entender direito
+        "versao_lider": VERSAO,
+        "versoes_diferentes": [e["nome"] for e in estacoes if e["online"] and e.get("versao") != VERSAO],
         "agora": agora, "ja_descarregaram": ja, "faltam": faltam, "uploads": uploads,
         "gerais": {"total_fotos": sum(v["fotos"] for v in ja), "descarregamentos": sum(v["vezes"] for v in ja),
                    "voluntarios": len(servir.get("voluntarios", [])), "ja_descarregaram": len(ja),

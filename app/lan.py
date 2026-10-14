@@ -9,8 +9,9 @@ import time
 
 import requests
 
-from . import core, stats
+from . import core, painel, stats
 from .core import E
+from .versao import VERSAO
 
 UDP_PORT = 50008
 _geracao = 0
@@ -21,15 +22,16 @@ def _transmitir(gen):
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     sock.settimeout(1.0)
     while gen == _geracao and E.network_mode == "lider":
-        if not E.active_servir:
+        sv = E.active_servir
+        if not sv:
             time.sleep(2.0)
             continue
-        try:
-            msg = f"SERVIR_LEADER:{core.obter_ip_local()}:{E.local_port}:" \
-                  f"{E.active_servir.get('nome', 'Servir')}:{E.active_servir.get('id', '0')}"
-            sock.sendto(msg.encode(), ('<broadcast>', UDP_PORT))
-        except Exception as e:
-            print(f"Erro no broadcast UDP: {e}")
+        msg = f"SERVIR_LEADER:{core.obter_ip_local()}:{E.local_port}:{sv.get('nome', 'Servir')}:{sv.get('id', '0')}"
+        for destino in ['<broadcast>'] + painel.enderecos_broadcast():
+            try:
+                sock.sendto(msg.encode(), (destino, UDP_PORT))
+            except Exception as e:
+                print(f"Erro no broadcast UDP ({destino}): {e}")
         time.sleep(3.0)
     sock.close()
 
@@ -48,8 +50,16 @@ def _escutar(gen):
         sock.close()
         return
     sock.settimeout(1.0)
+    ultimo_registro = time.time()
     while gen == _geracao and E.network_mode == "auxiliar":
         if E.active_servir:
+            # registra de novo de tempos em tempos: se o lider reiniciar (ex.: atualizacao), ele volta a ver este PC
+            if E.lider_detectado and time.time() - ultimo_registro > 20:
+                ultimo_registro = time.time()
+                try:
+                    registrar_no_lider()
+                except Exception as e:
+                    print(f"Lider sem resposta ao registrar: {type(e).__name__}")
             time.sleep(2.0)
             continue
         try:
@@ -82,12 +92,28 @@ def mudar_modo(modo):
     iniciar_servicos()
 
 
+def registrar_no_lider():
+    ip, port = E.lider_detectado["ip"], E.lider_detectado["port"]
+    return requests.post(f"http://{ip}:{port}/register", timeout=3.0, json={
+        "ip": core.obter_ip_local(), "nome": platform.node() or "Estação Auxiliar", "port": E.local_port,
+        "versao": VERSAO})
+
+
 def sincronizar_com_lider():
     if not E.lider_detectado:
         raise RuntimeError("Nenhum lider detectado na rede.")
     ip, port = E.lider_detectado["ip"], E.lider_detectado["port"]
-    r = requests.post(f"http://{ip}:{port}/register", timeout=3.0, json={
-        "ip": core.obter_ip_local(), "nome": platform.node() or "Estação Auxiliar", "port": E.local_port})
+    try:
+        r = registrar_no_lider()
+    except requests.exceptions.ConnectTimeout:
+        # o anuncio (UDP) chegou, mas a conexao (TCP) nao: e o firewall do PC lider descartando
+        raise RuntimeError(
+            f"O líder ({ip}) foi encontrado, mas não aceitou a conexão na porta {port}: o firewall do "
+            "computador líder está bloqueando. No PC líder — Windows: instale o programa pelo instalador (ele "
+            "libera o firewall). Linux: rode no terminal  sudo ufw allow 50007/tcp  e  sudo ufw allow 50008/udp . "
+            "Mac: permita as conexões de entrada quando o macOS perguntar.") from None
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError(f"O líder ({ip}) não respondeu: confira se o programa está aberto no PC líder.") from None
     if r.status_code != 200:
         raise RuntimeError(f"Não foi possível se registrar no líder: código {r.status_code}")
     r = requests.get(f"http://{ip}:{port}/preset", timeout=3.0)

@@ -269,3 +269,25 @@ def test_envios_ao_drive_de_todos_os_pcs(monkeypatch):
     assert [(u["fotografo"], u["estacao"], u["papel"], u["estado"]) for u in ups] == [
         ("Rafael Soler", "PC-IGREJA", "lider", "concluido"), ("Ana", "PC-AUX-1", "auxiliar", "rodando")]
     assert ups[1]["atuais"] == ["Ana_004.JPG"] and ups[0]["msg"].startswith("41 de 41")
+
+
+def test_broadcast_em_cada_rede_local(monkeypatch):
+    # 255.255.255.255 sai por uma placa so (macOS, Windows com VPN): o lider anuncia tambem em cada rede
+    monkeypatch.setattr(painel, "interfaces_locais", lambda: [
+        ("192.168.15.100", "255.255.255.0"), ("10.1.2.3", "255.255.0.0"), ("172.16.0.5", None), ("10.9.9.9", "255.255.255.255")])
+    assert painel.enderecos_broadcast() == ["192.168.15.255", "10.1.255.255", "172.16.0.255"]
+
+
+def test_auxiliar_explica_firewall_do_lider(monkeypatch):
+    # o anuncio UDP chega mas a conexao TCP nao: mensagem clara em vez do erro tecnico do requests
+    from app import lan
+    E.lider_detectado = {"ip": "192.168.15.100", "port": 50007, "nome_evento": "X", "evento_id": "1"}
+
+    def bloqueado(*a, **k):
+        raise lan.requests.exceptions.ConnectTimeout("timed out")
+    monkeypatch.setattr(lan.requests, "post", bloqueado)
+    try:
+        lan.sincronizar_com_lider()
+        raise AssertionError("deveria falhar")
+    except RuntimeError as e:
+        assert "firewall" in str(e) and "sudo ufw allow 50007/tcp" in str(e)

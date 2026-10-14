@@ -9,7 +9,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import core, drive, lan, painel, review, stats, transfer
+from . import atualizador, core, drive, lan, painel, review, stats, transfer, versao
 from .core import E
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -19,13 +19,22 @@ app = FastAPI(title="Descarregador de Fotos - Web")
 # a menos que ALLOW_REMOTE_UI=1.
 # /painel e /painel/dados: painel de acompanhamento aberto pelo QR code (somente leitura); /atividade: status do PC
 ROTAS_LAN = {"/preset", "/stats", "/register", "/finalize", "/numeracao", "/atividade", "/painel", "/painel/dados"}
-UPDATE = {"disponivel": False, "msg": ""}
+# url: pagina da release para baixar (executavel); sem url = atualizacao via git (codigo-fonte)
+UPDATE = {"disponivel": False, "msg": "", "url": ""}
+
+
+def _git(*args, timeout=10):
+    return subprocess.run(["git", *args], cwd=core.BASE_DIR, capture_output=True, text=True, timeout=timeout,
+                          **core.SEM_JANELA)
 
 
 def _head():
+    # programa instalado: nao ha git (atualiza pelas Releases). Chamar o git no Windows abria um terminal a cada
+    # consulta da tela.
+    if versao.EMPACOTADO:
+        return None
     try:
-        r = subprocess.run(["git", "rev-parse", "HEAD"], cwd=core.BASE_DIR, capture_output=True, text=True, timeout=3)
-        return r.stdout.strip() or None
+        return _git("rev-parse", "HEAD", timeout=3).stdout.strip() or None
     except Exception:
         return None
 
@@ -79,7 +88,22 @@ def estado():
         "transferidas": len(E.arquivos_transferidos),
         "update": UPDATE,
         "precisa_reiniciar": precisa_reiniciar(),
+        "versao": versao.VERSAO, "empacotado": versao.EMPACOTADO,
+        "atualizacao": atualizador.ESTADO,
     }
+
+
+@app.get("/api/versao")
+def obter_versao():
+    """Tambem usado pelo executavel para saber se o programa ja esta aberto (clicar de novo so abre o navegador)."""
+    return {"app": "descarregador-fotos", "versao": versao.VERSAO, "empacotado": versao.EMPACOTADO}
+
+
+@app.post("/api/encerrar")
+def encerrar():
+    """Fecha o programa (no executavel nao ha terminal para dar Ctrl+C). Responde antes de sair."""
+    threading.Timer(0.5, os._exit, args=(0,)).start()
+    return {"ok": True}
 
 
 @app.post("/api/ack-finalizado")
@@ -355,7 +379,7 @@ def iniciar_transferencia(d: dict = Body(...)):
     E.destino_base = d["destino_base"]
     try:
         return transfer.iniciar(fot, d["destino_base"], d["pastas"], d.get("categoria", "Raiz (Nenhuma)"),
-                                d.get("subpasta", True), d.get("modo", "novas"))
+                                d.get("subpasta", True), d.get("modo", "novas"), bool(d.get("converter_raw")))
     except RuntimeError as e:
         erro(str(e))
 
@@ -560,7 +584,8 @@ def lan_stats():
 def lan_register(d: dict = Body(...)):
     if not d.get("ip") or not d.get("nome"):
         return Response(status_code=400)
-    E.auxiliar_stations[d["ip"]] = {"nome": d["nome"], "port": d.get("port", 50007), "last_seen": time.time()}
+    E.auxiliar_stations[d["ip"]] = {"nome": d["nome"], "port": d.get("port", 50007), "last_seen": time.time(),
+                                    "versao": d.get("versao")}   # app desktop/versoes antigas nao mandam
     return {"status": "ok"}
 
 
@@ -636,11 +661,11 @@ def lan_atividade():
 
 # ======================= atualizacao via git =======================
 
-def _git(*args, timeout=10):
-    return subprocess.run(["git", *args], cwd=core.BASE_DIR, capture_output=True, text=True, timeout=timeout)
-
-
 def verificar_atualizacao():
+    """Codigo-fonte: avisa quando o GitHub tem commits novos (atualiza com git pull). O programa instalado se
+    atualiza sozinho pelas releases (app/atualizador.py)."""
+    if versao.EMPACOTADO:
+        return
     try:
         if not os.path.isdir(os.path.join(core.BASE_DIR, ".git")):
             return
@@ -658,6 +683,8 @@ def verificar_atualizacao():
 
 @app.post("/api/update/aplicar")
 def aplicar_atualizacao():
+    if versao.EMPACOTADO:
+        erro("No programa instalado, baixe a nova versão na página de downloads.")
     r = _git("pull", "--ff-only", "origin", "main", timeout=30)
     if r.returncode != 0:
         erro(f"Falha ao atualizar: {r.stderr.strip()}", 500)
@@ -668,7 +695,20 @@ def aplicar_atualizacao():
 @app.on_event("startup")
 def iniciar():
     drive.sincronizar_env()
+    retomar = atualizador.ler_retomar()        # reabriu depois de uma atualizacao automatica?
+    if retomar:
+        E.network_mode = retomar.get("modo") or E.network_mode
     lan.iniciar_servicos()
+    if retomar:
+        # volta como estava: Servir ativo, lider encontrado e PCs auxiliares conectados
+        if retomar.get("servir"):
+            core.ativar_servir(retomar["servir"])
+            if retomar.get("destino_base") and os.path.isdir(retomar["destino_base"]):
+                E.destino_base = retomar["destino_base"]
+        E.lider_detectado = retomar.get("lider")
+        E.auxiliar_stations.update(retomar.get("auxiliares") or {})
+        print(f"Atualizado de v{retomar.get('de_versao')} para v{versao.VERSAO}; Servir retomado.")
+    atualizador.iniciar()
     threading.Thread(target=transfer.monitorar_cartao, daemon=True).start()
     threading.Thread(target=verificar_atualizacao, daemon=True).start()
 

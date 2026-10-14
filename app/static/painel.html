@@ -95,6 +95,7 @@ function desenha() {
    <div class="tile"><b>${g.pcs_ocupados}</b><span>PC(s) ocupado(s) agora</span></div>
    <div class="tile"><b>${g.pcs_livres}/${g.pcs}</b><span>PC(s) livre(s)${g.pcs_offline ? ` · <span class="bad">${g.pcs_offline} sem resposta</span>` : ''}</span></div>
   </div>
+  ${(D.versoes_diferentes || []).length ? `<div class="card" style="border-color:var(--lar)"><b class="warn">⚠️ PCs com versão diferente do líder (v${esc(D.versao_lider)}):</b> ${D.versoes_diferentes.map(esc).join(', ')}.<br><span class="mini mut">Instale a mesma versão em todos os PCs para que a numeração e as estatísticas fiquem certas.</span></div>` : ''}
   <div class="card"><h2>⏱️ Descarregando agora</h2>
    ${D.agora.map(a => `<div class="item ocup"><span class="t">${frase(a)}${a.fase === 'copiando' && a.total ? `<progress value="${a.feitos}" max="${a.total}"></progress>` : ''}</span></div>`).join('') || '<p class="vazio">Ninguém descarregando no momento.</p>'}
   </div>
@@ -104,7 +105,7 @@ function desenha() {
      const rot = { livre: 'Livre', ocupado: 'Ocupado', offline: 'Sem resposta' }[st] || 'Conectado';
      const det = st === 'ocupado' ? `<br><span class="mini mut">${a.voluntario ? esc(a.voluntario) + ' · ' : ''}há <span class="tempo" data-s="${a.segundos}">${decorrido(a.segundos)}</span></span>`
        : e.sem_suporte ? '<br><span class="mini mut">versão sem status (atualize esta estação)</span>' : '';
-     return `<div class="item"><span class="t">${e.papel === 'lider' ? '👑' : '💻'} ${nomePC(e)} <span class="mini mut">${esc(e.ip || '')}</span>${det}</span><span class="pill ${st}">${rot}</span></div>`;
+     return `<div class="item"><span class="t">${e.papel === 'lider' ? '👑' : '💻'} ${nomePC(e)} <span class="mini mut">${esc(e.ip || '')} · ${e.versao ? 'v' + esc(e.versao) : 'versão ?'}</span>${e.online && e.versao !== D.versao_lider ? ' <span class="mini warn">⚠️ versão diferente do líder</span>' : ''}${det}</span><span class="pill ${st}">${rot}</span></div>`;
    }).join('')}
    ${D.estacoes.length === 1 ? '<p class="mut mini">Nenhum PC auxiliar conectado ao líder.</p>' : ''}
   </div>

@@ -5,3 +5,10 @@ __pycache__/
 .env copy
 data/
 Fotos_Sistema/
+autoteste.txt
+descarregador.log*
+build/
+dist/
+vendor/
+packaging/versao_windows.txt
+saida/

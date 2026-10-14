@@ -1,0 +1,271 @@
+# Compila o Descarregador de Fotos para Windows, macOS (Apple Silicon e Intel) e Linux, testa cada programa
+# compilado (autoteste, rede Líder/Auxiliar, instalação e atualização automática) e publica a versão.
+#
+# - push na main: se mudou o programa, publica a versão seguinte (1.0.1, 1.0.2...; regras em
+#   packaging/calcular_versao.py). Os PCs com o programa instalado se atualizam sozinhos.
+# - pull request: testa e compila com o número que a versão teria (programas em "Artifacts"), sem publicar.
+name: Compilar
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# na main as execuções ficam em fila (cada uma publica uma versão); em pull request a nova cancela a anterior
+concurrency:
+  group: compilar-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  PYTHON: "3.12"
+  PYINSTALLER: "6.22.3"
+
+jobs:
+  versao:
+    name: Versão
+    runs-on: ubuntu-latest
+    outputs:
+      versao: ${{ steps.v.outputs.versao }}
+      anterior: ${{ steps.v.outputs.anterior }}
+      publicar: ${{ steps.v.outputs.publicar }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0        # tags das versões anteriores
+      - id: v
+        name: Calcular a versão
+        shell: bash
+        run: |
+          ARGS=""
+          if [ "$GITHUB_REF" = refs/heads/main ] && [ "$GITHUB_EVENT_NAME" != pull_request ]; then ARGS=--publicavel; fi
+          python3 packaging/calcular_versao.py $ARGS | tee -a "$GITHUB_OUTPUT"
+
+  testes:
+    name: Testes (${{ matrix.os }})
+    needs: versao
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON }}
+          cache: pip
+      - run: pip install -r requirements.txt pytest httpx
+      - run: python -m pytest tests -q
+
+  compilar:
+    name: Compilar ${{ matrix.nome }}
+    needs: [versao, testes]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { nome: windows, os: windows-latest }
+          # Ubuntu 22.04: o programa compilado roda nas distribuições de 2022 em diante
+          - { nome: linux, os: ubuntu-22.04 }
+          - { nome: macos-apple-silicon, os: macos-14 }
+          - { nome: macos-intel, os: macos-15-intel }
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSAO: ${{ needs.versao.outputs.versao }}
+      NO_BROWSER: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON }}
+          cache: pip
+      # so pacotes prontos (oficiais) das bibliotecas com codigo nativo: no Mac Intel as versoes mais novas nao tem
+      # mais pacote pronto e, compiladas na hora, ficam ligadas a um OpenSSL diferente do que vai junto no programa
+      - name: Dependências
+        run: pip install --only-binary=cryptography,rawpy,cffi,pillow,psutil -r requirements.txt "pyinstaller==${{ env.PYINSTALLER }}"
+
+      - name: Gravar a versão desta compilação
+        shell: bash
+        run: printf '%s\n' "$VERSAO" > VERSION
+
+      - name: Informações de versão do .exe
+        if: runner.os == 'Windows'
+        run: python packaging/versao_windows.py
+
+      - name: Conversor de RAW para JPEG (LightCraft)
+        run: python packaging/baixar_lightcraft.py
+
+      - name: PyInstaller
+        run: pyinstaller --noconfirm packaging/descarregador.spec
+
+      # ---------- autoteste do programa compilado ----------
+      - name: Autoteste (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\DescarregadorDeFotos\DescarregadorDeFotos.exe" -ArgumentList "--autoteste" -Wait -PassThru
+          Get-Content "$env:USERPROFILE\Descarregador de Fotos\autoteste.txt"
+          if ($p.ExitCode -ne 0) { exit 1 }
+      - name: Autoteste (Linux)
+        if: runner.os == 'Linux'
+        run: dist/DescarregadorDeFotos/DescarregadorDeFotos --autoteste
+      - name: Autoteste (macOS)
+        if: runner.os == 'macOS'
+        run: '"dist/Descarregador de Fotos.app/Contents/MacOS/DescarregadorDeFotos" --autoteste'
+
+      # ---------- rede Líder/Auxiliar contra o programa aberto ----------
+      - name: Rede Líder/Auxiliar (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $proc = Start-Process -FilePath "dist\DescarregadorDeFotos\DescarregadorDeFotos.exe" -PassThru
+          python packaging/teste_rede.py 50007
+          $r = $LASTEXITCODE
+          if ($r -ne 0) {
+            "Processo encerrado: $($proc.HasExited)  código: $($proc.ExitCode)"
+            netstat -ano | Select-String ":5000[78]"
+          }
+          try { Invoke-RestMethod -Method Post http://127.0.0.1:50007/api/encerrar | Out-Null } catch { }
+          Get-Content "$env:USERPROFILE\Descarregador de Fotos\descarregador.log" -ErrorAction SilentlyContinue
+          exit $r
+      - name: Rede Líder/Auxiliar (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then BIN="dist/Descarregador de Fotos.app/Contents/MacOS/DescarregadorDeFotos"
+          else BIN=dist/DescarregadorDeFotos/DescarregadorDeFotos; fi
+          "$BIN" &
+          r=0; python packaging/teste_rede.py 50007 || r=$?
+          curl -s -X POST http://127.0.0.1:50007/api/encerrar || true
+          cat "$HOME/Descarregador de Fotos/descarregador.log" || true
+          exit $r
+
+      # ---------- pacotes ----------
+      - name: Instalador e versão portátil (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          & $iscc "/DVersao=$env:VERSAO" packaging\windows\instalador.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Compress-Archive -Path dist\DescarregadorDeFotos -DestinationPath "saida\DescarregadorDeFotos-$env:VERSAO-windows-portatil.zip"
+          Get-ChildItem saida
+      - name: Pacotes .deb e .tar.gz (Linux)
+        if: runner.os == 'Linux'
+        run: packaging/linux/montar_pacotes.sh
+      - name: Imagem .dmg (macOS)
+        if: runner.os == 'macOS'
+        run: packaging/macos/montar_dmg.sh "${{ matrix.nome == 'macos-intel' && 'intel' || 'apple-silicon' }}"
+
+      # ---------- instala o pacote como o usuário faria e testa de novo ----------
+      - name: Instalar e testar (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem "saida\*-windows-instalador.exe" | Select-Object -First 1
+          Start-Process -FilePath $setup.FullName -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait
+          $exe = "$env:LOCALAPPDATA\Programs\Descarregador de Fotos\DescarregadorDeFotos.exe"
+          if (-not (Test-Path $exe)) { Write-Error "programa não instalado"; exit 1 }
+          $atalho = Join-Path ([Environment]::GetFolderPath('Desktop')) "Descarregador de Fotos.lnk"
+          if (-not (Test-Path $atalho)) { Write-Error "sem ícone na Área de Trabalho"; exit 1 }
+          netsh advfirewall firewall show rule name="Descarregador de Fotos - $env:USERNAME"
+          if ($LASTEXITCODE -ne 0) { Write-Error "regra do firewall não criada"; exit 1 }
+          $p = Start-Process -FilePath $exe -ArgumentList "--autoteste" -Wait -PassThru
+          Get-Content "$env:USERPROFILE\Descarregador de Fotos\autoteste.txt"
+          if ($p.ExitCode -ne 0) { exit 1 }
+          (Get-Item $exe).VersionInfo | Format-List ProductVersion, FileVersion, FileDescription
+          if ((Get-Item $exe).VersionInfo.ProductVersion -ne $env:VERSAO) { Write-Error "versão do .exe errada"; exit 1 }
+      - name: Instalar e testar (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y ./saida/*.deb
+          test -f /usr/share/applications/descarregador-de-fotos.desktop
+          dpkg-query -W -f='${Version}\n' descarregador-de-fotos | grep -qx "$VERSAO"
+          # firewall (ufw) liberado pela instalacao, como o instalador do Windows faz
+          if command -v ufw >/dev/null; then sudo ufw show added | tee /dev/stderr | grep -q "Descarregador de Fotos"; fi
+          descarregador-de-fotos --autoteste
+      - name: Instalar e testar (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          DMG="$(ls saida/*.dmg)"
+          hdiutil attach "$DMG" -nobrowse -mountpoint /tmp/dmg
+          cp -R "/tmp/dmg/Descarregador de Fotos.app" /Applications/
+          hdiutil detach /tmp/dmg
+          defaults read "/Applications/Descarregador de Fotos.app/Contents/Info" CFBundleShortVersionString | grep -qx "$VERSAO"
+          "/Applications/Descarregador de Fotos.app/Contents/MacOS/DescarregadorDeFotos" --autoteste
+
+      # ---------- atualização automática: o programa instalado se acha antigo e se atualiza sozinho ----------
+      - name: Atualização automática
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/releases" && cp saida/* "$RUNNER_TEMP/releases/"
+          case "$RUNNER_OS" in
+            Windows) EXE="$LOCALAPPDATA/Programs/Descarregador de Fotos/DescarregadorDeFotos.exe" ;;
+            macOS)   EXE="/Applications/Descarregador de Fotos.app/Contents/MacOS/DescarregadorDeFotos" ;;
+            Linux)   EXE="/opt/descarregador-de-fotos/DescarregadorDeFotos" ;;
+          esac
+          r=0; python packaging/teste_atualizacao.py "$EXE" "$RUNNER_TEMP/releases" || r=$?
+          echo "--- log do programa"; cat "$HOME/Descarregador de Fotos/descarregador.log" 2>/dev/null | tail -30 || true
+          for f in aplicar.log passos.log instalador.log; do
+            echo "--- $f"; cat "$HOME/Descarregador de Fotos/atualizacao/$f" 2>/dev/null | tail -40 || true
+          done
+          exit $r
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DescarregadorDeFotos-${{ env.VERSAO }}-${{ matrix.nome }}
+          path: saida/*
+          if-no-files-found: error
+
+  release:
+    name: Publicar versão
+    if: needs.versao.outputs.publicar == 'true'
+    needs: [versao, compilar]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSAO: ${{ needs.versao.outputs.versao }}
+      ANTERIOR: ${{ needs.versao.outputs.anterior }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: saida
+          merge-multiple: true
+      - name: Notas da versão
+        run: |
+          cd saida && sha256sum * > SHA256SUMS.txt && cd ..
+          {
+            echo "## Como instalar"
+            echo "| Sistema | Baixe | Depois |"
+            echo "|---|---|---|"
+            echo "| **Windows** 10/11 | \`DescarregadorDeFotos-$VERSAO-windows-instalador.exe\` | Abra e avance. O ícone aparece na Área de Trabalho. |"
+            echo "| **Mac** com chip Apple (M1, M2…) | \`DescarregadorDeFotos-$VERSAO-macos-apple-silicon.dmg\` | Abra e arraste para Aplicativos. Veja a observação abaixo. |"
+            echo "| **Mac** com Intel | \`DescarregadorDeFotos-$VERSAO-macos-intel.dmg\` | Igual ao de cima. |"
+            echo "| **Linux** (Ubuntu, Mint, Debian) | \`DescarregadorDeFotos-$VERSAO-linux-amd64.deb\` | Dê dois cliques e instale. O ícone aparece no menu. |"
+            echo
+            echo "**Só precisa instalar uma vez:** depois o programa se atualiza sozinho quando o PC estiver livre."
+            echo
+            echo "**Mac, na primeira vez:** o macOS avisa que não pode verificar o desenvolvedor. Abra *Ajustes do Sistema → Privacidade e Segurança*, desça até o aviso do Descarregador de Fotos e clique em **Abrir Mesmo Assim**. Também permita o acesso à rede local quando ele perguntar."
+            echo
+            echo "**Windows:** se aparecer \"O Windows protegeu o computador\", clique em *Mais informações → Executar assim mesmo*."
+            echo
+            echo "## O que mudou"
+            SECAO="$(awk -v v="$VERSAO" '$0 ~ "^## \\[" v "\\]" {on=1; next} on && /^## \[/ {exit} on' CHANGELOG.md)"
+            if [ -n "$SECAO" ]; then echo "$SECAO"
+            elif [ -n "$ANTERIOR" ]; then git log --no-merges --format='- %s' "v$ANTERIOR..HEAD"
+            fi
+          } > notas.md
+          cat notas.md
+      - name: Publicar
+        run: |
+          gh release create "v$VERSAO" saida/* --target "$GITHUB_SHA" --title "Descarregador de Fotos v$VERSAO" --notes-file notas.md
