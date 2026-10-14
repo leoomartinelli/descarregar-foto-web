@@ -13,6 +13,15 @@ datas = [
     (os.path.join(RAIZ, "app", "static"), os.path.join("app", "static")),
     (os.path.join(RAIZ, "VERSION"), "."),
 ]
+# conversor de RAW para JPEG (LightCraft): baixado antes por packaging/baixar_lightcraft.py
+LIGHTCRAFT = os.path.join(RAIZ, "vendor", "lightcraft")
+binarios = collect_dynamic_libs("rawpy")
+if os.path.isdir(LIGHTCRAFT):
+    for nome in os.listdir(LIGHTCRAFT):
+        item = (os.path.join(LIGHTCRAFT, nome), "lightcraft")
+        (binarios if nome.startswith("lightcraft-cli") else datas).append(item)
+else:
+    print("AVISO: vendor/lightcraft nao existe; o programa sai sem a conversao de RAW para JPEG")
 datas += collect_data_files("certifi")
 datas += collect_data_files("googleapiclient", includes=["**/drive.v3.json"])
 
@@ -22,7 +31,7 @@ hidden = (collect_submodules("uvicorn") + collect_submodules("app")
 a = Analysis(
     [os.path.join(RAIZ, "run.py")],
     pathex=[RAIZ],
-    binaries=collect_dynamic_libs("rawpy"),
+    binaries=binarios,
     datas=datas,
     hiddenimports=hidden,
     excludes=["tkinter", "matplotlib", "IPython", "pytest"],

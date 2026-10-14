@@ -9,5 +9,6 @@ autoteste.txt
 descarregador.log*
 build/
 dist/
+vendor/
 packaging/versao_windows.txt
 saida/

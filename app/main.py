@@ -379,7 +379,7 @@ def iniciar_transferencia(d: dict = Body(...)):
     E.destino_base = d["destino_base"]
     try:
         return transfer.iniciar(fot, d["destino_base"], d["pastas"], d.get("categoria", "Raiz (Nenhuma)"),
-                                d.get("subpasta", True), d.get("modo", "novas"))
+                                d.get("subpasta", True), d.get("modo", "novas"), bool(d.get("converter_raw")))
     except RuntimeError as e:
         erro(str(e))
 

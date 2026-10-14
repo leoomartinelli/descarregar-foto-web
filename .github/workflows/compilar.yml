@@ -96,6 +96,9 @@ jobs:
         if: runner.os == 'Windows'
         run: python packaging/versao_windows.py
 
+      - name: Conversor de RAW para JPEG (LightCraft)
+        run: python packaging/baixar_lightcraft.py
+
       - name: PyInstaller
         run: pyinstaller --noconfirm packaging/descarregador.spec
 

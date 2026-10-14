@@ -6,7 +6,7 @@ import time
 
 import psutil
 
-from . import core, lan, painel, stats
+from . import core, lan, painel, raw, stats
 from .core import E
 
 
@@ -159,13 +159,16 @@ def planejar(pastas):
         "todas": len(todas),
         "tem_raw": any(f.lower().endswith(core.EXT_RAW) for f in todas),
         "tem_raw_novas": any(f.lower().endswith(core.EXT_RAW) for f in novas),
+        "pode_converter_raw": raw.disponivel(),
     }
 
 
 # ---------- copia ----------
 
-def iniciar(fotografo, destino_base, pastas, categoria, criar_subpasta, modo):
-    """modo: 'novas' (apenas apos o ultimo marcador) ou 'todas'."""
+def iniciar(fotografo, destino_base, pastas, categoria, criar_subpasta, modo, converter_raw=False):
+    """modo: 'novas' (apenas apos o ultimo marcador) ou 'todas'.
+
+    converter_raw: depois de copiar, transforma as copias RAW do PC em JPEG e apaga essas copias RAW."""
     if E.transfer["estado"] == "rodando":
         raise RuntimeError("Ja existe uma transferencia em andamento.")
     destino = core.calcular_caminho_final(destino_base, fotografo, categoria, criar_subpasta)
@@ -174,15 +177,18 @@ def iniciar(fotografo, destino_base, pastas, categoria, criar_subpasta, modo):
     arquivos, _, _ = coletar(pastas, so_novas=(modo == "novas"))
     if not arquivos:
         raise RuntimeError("Nenhuma imagem encontrada nas pastas selecionadas.")
+    if converter_raw and not raw.disponivel():
+        raise RuntimeError("O conversor de RAW para JPEG não está instalado neste computador.")
     E.arquivos_transferidos = []
     E.transfer = {"estado": "rodando", "progresso": 0, "total": len(arquivos), "feitos": 0,
                   "msg": "Copiando...", "destino": destino}
     painel.copiando(fotografo)
-    threading.Thread(target=_copiar, args=(fotografo, destino, base_fotografo, arquivos), daemon=True).start()
+    threading.Thread(target=_copiar, args=(fotografo, destino, base_fotografo, arquivos, converter_raw),
+                     daemon=True).start()
     return {"total": len(arquivos), "destino": destino}
 
 
-def _copiar(fotografo, destino, base_fotografo, arquivos):
+def _copiar(fotografo, destino, base_fotografo, arquivos, converter_raw=False):
     import shutil
     t0 = time.time()
     try:
@@ -232,26 +238,46 @@ def _copiar(fotografo, destino, base_fotografo, arquivos):
             list(ex.map(processar, enumerate(arquivos)))
 
         _gravar_markers(copiados)
-        # as copias terminam fora de ordem (4 threads): ordena pelo nome para o revisor
-        transferidos.sort(key=lambda p: os.path.basename(p).lower())
-        E.arquivos_transferidos = transferidos
-        if transferidos:
-            core.registrar_historico(fotografo, base_fotografo, len(transferidos))
         if copiados and E.active_servir:
             try:
                 E.descarregamento_atual = core.registrar_descarregamento(
                     core.raiz_servir(E.active_servir), base_fotografo, len(copiados), time.time() - t0)
             except Exception as e:
                 print(f"Erro ao registrar tempo de descarregamento: {e}")
+        falhas_raw = []
+        if converter_raw:
+            transferidos, falhas_raw = _converter_raws(destino, transferidos)
+        # as copias terminam fora de ordem (4 threads): ordena pelo nome para o revisor
+        transferidos.sort(key=lambda p: os.path.basename(p).lower())
+        E.arquivos_transferidos = transferidos
+        if transferidos:
+            core.registrar_historico(fotografo, base_fotografo, len(transferidos))
         falhas = total - len(copiados)
-        E.transfer.update(estado="concluido", progresso=1,
-                          msg=f"{len(copiados)} arquivo(s) copiados" + (f", {falhas} com erro (veja o log)" if falhas else ""),
-                          revisaveis=len(transferidos), falhas=falhas)
+        msg = f"{len(copiados)} arquivo(s) copiados" + (f", {falhas} com erro (veja o log)" if falhas else "")
+        if falhas_raw:
+            msg += f" · {len(falhas_raw)} RAW não convertido(s), ficaram em RAW (veja o log)"
+        E.transfer.update(estado="concluido", progresso=1, msg=msg,
+                          revisaveis=len(transferidos), falhas=falhas, falhas_raw=len(falhas_raw))
         painel.concluido()
         stats.atualizar_voluntarios_em_segundo_plano()
     except Exception as e:
         E.transfer.update(estado="erro", msg=str(e))
         painel.erro_copia()
+
+
+def _converter_raws(destino, transferidos):
+    """Troca as copias RAW do PC por JPEG. Devolve (lista atualizada, RAWs que nao converteram)."""
+    raws = [p for p in transferidos if p.lower().endswith(core.EXT_RAW)]
+    if not raws:
+        return transferidos, []
+
+    def avancar(feitos, total):
+        E.transfer.update(feitos=feitos, total=total, progresso=feitos / total)
+
+    E.transfer.update(fase="convertendo", feitos=0, total=len(raws), progresso=0,
+                      msg="Convertendo RAW para JPEG...")
+    convertidos, falhas = raw.converter_todos(raws, destino, avancar)
+    return [convertidos.get(p, p) for p in transferidos], falhas
 
 
 def _gravar_markers(copiados):

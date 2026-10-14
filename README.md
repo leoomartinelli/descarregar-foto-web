@@ -36,6 +36,8 @@ vez. Para fechar, use **⏻ Encerrar** no Painel Inicial.
 ```
 Na primeira execução o ambiente virtual e as dependências são instalados automaticamente.
 Copie `.env-example` para `.env` se quiser definir credenciais do Google, webhook ou porta.
+Para a conversão de RAW para JPEG, baixe o conversor uma vez: `python packaging/baixar_lightcraft.py` (vai para
+`vendor/lightcraft/`; sem ele o programa só avisa que há RAW e copia no formato original).
 
 ## Versões e compilação
 - **Cada push na `main` que muda o programa vira uma versão nova** (`1.0.1`, `1.0.2`…) e os PCs se atualizam
@@ -55,7 +57,7 @@ obriga todos os PCs a atualizarem juntos, como o protocolo da rede):
 2. `python packaging/nova_versao.py 1.1.0` (confere tudo, grava o `VERSION` e faz o commit).
 3. `git push`.
 
-Compilar localmente (gera para o sistema atual): `pip install pyinstaller` e
+Compilar localmente (gera para o sistema atual): `pip install pyinstaller`, `python packaging/baixar_lightcraft.py` e
 `pyinstaller --noconfirm packaging/descarregador.spec` (resultado em `dist/`).
 
 ## Módulos (equivalentes ao app desktop)
@@ -64,6 +66,7 @@ Compilar localmente (gera para o sistema atual): `pip install pyinstaller` e
 | Dias de Servir (criar, editar, excluir, ativar) e Modo Avulso | Painel inicial |
 | Detecção de cartão SD / origem manual, seleção de pastas (DCIM) | Tela de descarregamento |
 | Cópia paralela, numeração `Fotografo_001`, marcador "já descarregadas", subpastas `_2`, `_3`, aviso de RAW | `app/transfer.py` |
+| Conversão de RAW para JPEG ao descarregar (pergunta antes; resolução total; apaga só a cópia RAW do PC, nunca o cartão) com o motor do [LightCraft](https://github.com/storytold/lightcraft) (MIT/Apache-2.0) | `app/raw.py` |
 | Seleção de fotos (miniaturas, teclado, desfazer, apagar) | Botão "Selecionar Fotos" |
 | Upload para o Google Drive | Tela de descarregamento |
 | Conta Google (credenciais, login OAuth, teste, desconectar) | Painel → Login Google |

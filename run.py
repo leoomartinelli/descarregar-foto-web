@@ -5,6 +5,7 @@ programa ja aberto apenas abre o navegador de novo (nao sobe um segundo servidor
 import json
 import multiprocessing
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -83,6 +84,14 @@ def autoteste():
         import rawpy
         return f"libraw {rawpy.libraw_version}"
 
+    def conversor_raw():
+        from app import core, raw
+        cli = raw.localizar_cli()
+        assert cli, "lightcraft-cli nao foi empacotado"
+        r = subprocess.run([cli, "--version"], capture_output=True, text=True, timeout=60, **core.SEM_JANELA)
+        assert r.returncode == 0 and "lightcraft-cli" in r.stdout, r.stdout + r.stderr
+        return r.stdout.strip()
+
     def qr():
         from app import painel
         assert b"<svg" in painel.qr_svg("http://192.168.0.10:50007/painel")
@@ -124,7 +133,7 @@ def autoteste():
         import google_auth_oauthlib.flow  # noqa: F401
 
     for nome, fn in (("versao", lambda: VERSAO), ("drive", drive), ("oauth", oauth), ("imagem", imagem), ("raw", raw),
-                     ("qrcode", qr), ("cartao", cartao), ("servidor", servidor)):
+                     ("conversor_raw", conversor_raw), ("qrcode", qr), ("cartao", cartao), ("servidor", servidor)):
         checar(nome, fn)
     texto = "\n".join(f"{'OK  ' if ok else 'FALHA'} {n} {info}" for n, ok, info in resultados)
     print(texto)

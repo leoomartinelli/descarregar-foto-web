@@ -396,8 +396,14 @@ async function vDescarregar() {
           if (!await confirmar('Fotos Já Descarregadas', `Atenção: Foram detectadas ${plano.ja_descarregados} fotos já descarregadas anteriormente nesta pasta.\n\nDeseja descarregar apenas as ${plano.novas} novas fotos tiradas após o último descarregamento?\n(Se selecionar 'Não', todas as ${plano.todas} fotos serão copiadas).`)) modo = 'todas';
         }
         const temRaw = modo === 'novas' ? plano.tem_raw_novas : plano.tem_raw;
-        if (temRaw && !await confirmar('Fotos em RAW Detectadas', 'Atenção: Foram detectadas fotos em formato RAW (.cr3, .cr2, .nef, .arw) nas pastas selecionadas.\n\nElas serão copiadas no formato original. Deseja prosseguir com o descarregamento?')) return;
-        await api('/api/transferencia/iniciar', { body: { ...body, modo } });
+        let converter_raw = false;
+        if (temRaw && plano.pode_converter_raw) {
+          const r = await modal(`<h2>Fotos em RAW Detectadas</h2>${esc('Tem fotos em RAW (.cr3, .cr2, .nef, .arw) no meio das selecionadas.\n\nDeseja transformar RAW em JPEG?\n\nOs JPEGs saem na resolução total. No computador fica só o JPEG (o RAW copiado é apagado depois de convertido). O cartão não é alterado.')}`,
+            [{ t: 'Cancelar', v: null, c: 'cinza' }, { t: 'Manter em RAW', v: false, c: 'cinza' }, { t: 'Transformar em JPEG', v: true }]);
+          if (r === null) return;
+          converter_raw = r;
+        } else if (temRaw && !await confirmar('Fotos em RAW Detectadas', 'Atenção: Foram detectadas fotos em formato RAW (.cr3, .cr2, .nef, .arw) nas pastas selecionadas.\n\nElas serão copiadas no formato original. Deseja prosseguir com o descarregamento?')) return;
+        await api('/api/transferencia/iniciar', { body: { ...body, modo, converter_raw } });
         ir_(4);
       } catch (e) { toast(e.message, true); }
   }
@@ -455,13 +461,13 @@ async function vDescarregar() {
   if (W.step === 4) {
     iniciarPoll(async () => {
       const t = await api('/api/transferencia/status'); const pg = q('#pg'); if (!pg) return;
-      pg.value = t.progresso; q('#pg-t').textContent = `${Math.round(t.progresso * 100)}% (${t.feitos}/${t.total})`;
+      pg.value = t.progresso; q('#pg-t').textContent = `${t.fase === 'convertendo' ? 'Convertendo RAW para JPEG · ' : ''}${Math.round(t.progresso * 100)}% (${t.feitos}/${t.total})`;
       if (t.estado === 'concluido' || t.estado === 'erro') {
         pararPoll();
         if (t.estado === 'erro') { await alerta('Erro', t.msg); W.step = 3; return vDescarregar(); }
         if (t.aviso) await alerta('Atenção', t.aviso);
         W.step = 5; await render();
-        if (t.revisaveis > 0 && await confirmar('Transferência Finalizada', `Foram transferidas ${t.revisaveis} foto(s) com sucesso!${t.falhas ? `\n(${t.falhas} arquivo(s) com erro de cópia — veja o log do servidor.)` : ''}\n\nDeseja iniciar a tela de seleção agora para revisar e apagar as fotos indesejadas?`)) abrirRevisor();
+        if (t.revisaveis > 0 && await confirmar('Transferência Finalizada', `Foram transferidas ${t.revisaveis} foto(s) com sucesso!${t.falhas ? `\n(${t.falhas} arquivo(s) com erro de cópia — veja o log do servidor.)` : ''}${t.falhas_raw ? `\n(${t.falhas_raw} RAW não puderam ser convertidos e ficaram em RAW — veja o log do servidor.)` : ''}\n\nDeseja iniciar a tela de seleção agora para revisar e apagar as fotos indesejadas?`)) abrirRevisor();
         else if (t.revisaveis === 0) alerta('Concluído', 'A cópia foi finalizada, mas nenhuma imagem compatível com revisão foi transferida.');
       }
     }, 600);
