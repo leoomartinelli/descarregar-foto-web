@@ -229,18 +229,29 @@ def aplicar(arquivo, tipo):
         script = os.path.join(PASTA, "aplicar.ps1")
         with open(script, "w", encoding="utf-8-sig") as f:      # BOM: o PowerShell le acentos certo
             f.write(_script_windows(arquivo, sys.executable))
-        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
-        subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-                          "-WindowStyle", "Hidden", "-File", script], creationflags=flags, env=_ambiente_limpo(),
-                         stdout=log, stderr=log, stdin=subprocess.DEVNULL, close_fds=True)
+        # console invisivel (DETACHED_PROCESS deixa o PowerShell sem console e ele nao roda); fora do "job" deste
+        # programa quando o Windows deixa, para nao ser encerrado junto com ele
+        cmd = ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script]
+        flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+        try:
+            proc = subprocess.Popen(cmd, creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB,
+                                    env=_ambiente_limpo(), stdout=log, stderr=log, stdin=subprocess.DEVNULL)
+        except OSError:
+            proc = subprocess.Popen(cmd, creationflags=flags, env=_ambiente_limpo(), stdout=log, stderr=log,
+                                    stdin=subprocess.DEVNULL)
     else:
         script = os.path.join(PASTA, "aplicar.sh")
         with open(script, "w", encoding="utf-8") as f:
             f.write(_script_unix(tipo, arquivo))
-        subprocess.Popen(["/bin/sh", script], start_new_session=True, env=_ambiente_limpo(),
-                         stdout=log, stderr=log, stdin=subprocess.DEVNULL, close_fds=True)
-    print(f"[Atualizacao] instalando {os.path.basename(arquivo)}; fechando para reabrir na versao nova")
-    threading.Timer(1.5, os._exit, args=(0,)).start()
+        proc = subprocess.Popen(["/bin/sh", script], start_new_session=True, env=_ambiente_limpo(),
+                                stdout=log, stderr=log, stdin=subprocess.DEVNULL, close_fds=True)
+    print(f"[Atualizacao] instalando {os.path.basename(arquivo)} (processo {proc.pid}); fechando para reabrir")
+
+    def sair():
+        print(f"[Atualizacao] instalador {'rodando' if proc.poll() is None else 'terminou com ' + str(proc.returncode)}")
+        sys.stdout.flush()
+        os._exit(0)
+    threading.Timer(1.5, sair).start()
 
 
 def pode_instalar_sozinho(tipo):
