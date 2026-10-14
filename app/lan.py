@@ -50,8 +50,16 @@ def _escutar(gen):
         sock.close()
         return
     sock.settimeout(1.0)
+    ultimo_registro = time.time()
     while gen == _geracao and E.network_mode == "auxiliar":
         if E.active_servir:
+            # registra de novo de tempos em tempos: se o lider reiniciar (ex.: atualizacao), ele volta a ver este PC
+            if E.lider_detectado and time.time() - ultimo_registro > 20:
+                ultimo_registro = time.time()
+                try:
+                    registrar_no_lider()
+                except Exception as e:
+                    print(f"Lider sem resposta ao registrar: {type(e).__name__}")
             time.sleep(2.0)
             continue
         try:
@@ -84,13 +92,18 @@ def mudar_modo(modo):
     iniciar_servicos()
 
 
+def registrar_no_lider():
+    ip, port = E.lider_detectado["ip"], E.lider_detectado["port"]
+    return requests.post(f"http://{ip}:{port}/register", timeout=3.0, json={
+        "ip": core.obter_ip_local(), "nome": platform.node() or "Estação Auxiliar", "port": E.local_port,
+        "versao": VERSAO})
+
+
 def sincronizar_com_lider():
     if not E.lider_detectado:
         raise RuntimeError("Nenhum lider detectado na rede.")
     ip, port = E.lider_detectado["ip"], E.lider_detectado["port"]
-    r = requests.post(f"http://{ip}:{port}/register", timeout=3.0, json={
-        "ip": core.obter_ip_local(), "nome": platform.node() or "Estação Auxiliar", "port": E.local_port,
-        "versao": VERSAO})
+    r = registrar_no_lider()
     if r.status_code != 200:
         raise RuntimeError(f"Não foi possível se registrar no líder: código {r.status_code}")
     r = requests.get(f"http://{ip}:{port}/preset", timeout=3.0)

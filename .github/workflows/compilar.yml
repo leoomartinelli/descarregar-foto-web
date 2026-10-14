@@ -1,20 +1,21 @@
 # Compila o Descarregador de Fotos para Windows, macOS (Apple Silicon e Intel) e Linux, testa cada programa
-# compilado (autoteste + protocolo da rede Líder/Auxiliar + instalação) e, numa tag vX.Y.Z, publica a release.
+# compilado (autoteste, rede Líder/Auxiliar, instalação e atualização automática) e publica a versão.
 #
-# - push na main / pull request: testa e compila (os programas ficam em "Artifacts" da execução)
-# - tag vX.Y.Z (ver packaging/nova_versao.py): tudo acima + release pública com os instaladores
+# - push na main: se mudou o programa, publica a versão seguinte (1.0.1, 1.0.2...; regras em
+#   packaging/calcular_versao.py). Os PCs com o programa instalado se atualizam sozinhos.
+# - pull request: testa e compila com o número que a versão teria (programas em "Artifacts"), sem publicar.
 name: Compilar
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
+# na main as execuções ficam em fila (cada uma publica uma versão); em pull request a nova cancela a anterior
 concurrency:
   group: compilar-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -29,20 +30,19 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       versao: ${{ steps.v.outputs.versao }}
+      anterior: ${{ steps.v.outputs.anterior }}
+      publicar: ${{ steps.v.outputs.publicar }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0        # tags das versões anteriores
       - id: v
-        name: Conferir VERSION, CHANGELOG e tag
+        name: Calcular a versão
         shell: bash
         run: |
-          VERSAO="$(tr -d '[:space:]' < VERSION)"
-          echo "Versão: $VERSAO"
-          [[ "$VERSAO" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::VERSION '$VERSAO' não é MAIOR.MENOR.CORREÇÃO"; exit 1; }
-          grep -q "^## \[$VERSAO\]" CHANGELOG.md || { echo "::error::CHANGELOG.md sem a seção '## [$VERSAO]'"; exit 1; }
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            [[ "$GITHUB_REF_NAME" == "v$VERSAO" ]] || { echo "::error::tag $GITHUB_REF_NAME diferente do VERSION (v$VERSAO)"; exit 1; }
-          fi
-          echo "versao=$VERSAO" >> "$GITHUB_OUTPUT"
+          ARGS=""
+          if [ "$GITHUB_REF" = refs/heads/main ] && [ "$GITHUB_EVENT_NAME" != pull_request ]; then ARGS=--publicavel; fi
+          python3 packaging/calcular_versao.py $ARGS | tee -a "$GITHUB_OUTPUT"
 
   testes:
     name: Testes (${{ matrix.os }})
@@ -87,6 +87,10 @@ jobs:
       # mais pacote pronto e, compiladas na hora, ficam ligadas a um OpenSSL diferente do que vai junto no programa
       - name: Dependências
         run: pip install --only-binary=cryptography,rawpy,cffi,pillow,psutil -r requirements.txt "pyinstaller==${{ env.PYINSTALLER }}"
+
+      - name: Gravar a versão desta compilação
+        shell: bash
+        run: printf '%s\n' "$VERSAO" > VERSION
 
       - name: Informações de versão do .exe
         if: runner.os == 'Windows'
@@ -162,10 +166,11 @@ jobs:
         run: |
           $setup = Get-ChildItem "saida\*-windows-instalador.exe" | Select-Object -First 1
           Start-Process -FilePath $setup.FullName -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait
-          $exe = "$env:ProgramFiles\Descarregador de Fotos\DescarregadorDeFotos.exe"
+          $exe = "$env:LOCALAPPDATA\Programs\Descarregador de Fotos\DescarregadorDeFotos.exe"
           if (-not (Test-Path $exe)) { Write-Error "programa não instalado"; exit 1 }
-          if (-not (Test-Path "$env:PUBLIC\Desktop\Descarregador de Fotos.lnk")) { Write-Error "sem ícone na Área de Trabalho"; exit 1 }
-          netsh advfirewall firewall show rule name="Descarregador de Fotos"
+          $atalho = Join-Path ([Environment]::GetFolderPath('Desktop')) "Descarregador de Fotos.lnk"
+          if (-not (Test-Path $atalho)) { Write-Error "sem ícone na Área de Trabalho"; exit 1 }
+          netsh advfirewall firewall show rule name="Descarregador de Fotos - $env:USERNAME"
           if ($LASTEXITCODE -ne 0) { Write-Error "regra do firewall não criada"; exit 1 }
           $p = Start-Process -FilePath $exe -ArgumentList "--autoteste" -Wait -PassThru
           Get-Content "$env:USERPROFILE\Descarregador de Fotos\autoteste.txt"
@@ -189,6 +194,21 @@ jobs:
           defaults read "/Applications/Descarregador de Fotos.app/Contents/Info" CFBundleShortVersionString | grep -qx "$VERSAO"
           "/Applications/Descarregador de Fotos.app/Contents/MacOS/DescarregadorDeFotos" --autoteste
 
+      # ---------- atualização automática: o programa instalado se acha antigo e se atualiza sozinho ----------
+      - name: Atualização automática
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/releases" && cp saida/* "$RUNNER_TEMP/releases/"
+          case "$RUNNER_OS" in
+            Windows) EXE="$LOCALAPPDATA/Programs/Descarregador de Fotos/DescarregadorDeFotos.exe" ;;
+            macOS)   EXE="/Applications/Descarregador de Fotos.app/Contents/MacOS/DescarregadorDeFotos" ;;
+            Linux)   EXE="/opt/descarregador-de-fotos/DescarregadorDeFotos" ;;
+          esac
+          r=0; python packaging/teste_atualizacao.py "$EXE" "$RUNNER_TEMP/releases" || r=$?
+          echo "--- log do programa"; cat "$HOME/Descarregador de Fotos/descarregador.log" 2>/dev/null | tail -30 || true
+          echo "--- log da instalação"; cat "$HOME/Descarregador de Fotos/atualizacao/aplicar.log" 2>/dev/null || true
+          exit $r
+
       - uses: actions/upload-artifact@v4
         with:
           name: DescarregadorDeFotos-${{ env.VERSAO }}-${{ matrix.nome }}
@@ -196,42 +216,49 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Publicar release
-    if: startsWith(github.ref, 'refs/tags/v')
+    name: Publicar versão
+    if: needs.versao.outputs.publicar == 'true'
     needs: [versao, compilar]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       VERSAO: ${{ needs.versao.outputs.versao }}
+      ANTERIOR: ${{ needs.versao.outputs.anterior }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           path: saida
           merge-multiple: true
-      - name: Notas da release
+      - name: Notas da versão
         run: |
           cd saida && sha256sum * > SHA256SUMS.txt && cd ..
           {
             echo "## Como instalar"
             echo "| Sistema | Baixe | Depois |"
             echo "|---|---|---|"
-            echo "| **Windows** 10/11 | \`DescarregadorDeFotos-$VERSAO-windows-instalador.exe\` | Abra e clique em Avançar. O ícone aparece na Área de Trabalho. |"
+            echo "| **Windows** 10/11 | \`DescarregadorDeFotos-$VERSAO-windows-instalador.exe\` | Abra e avance. O ícone aparece na Área de Trabalho. |"
             echo "| **Mac** com chip Apple (M1, M2…) | \`DescarregadorDeFotos-$VERSAO-macos-apple-silicon.dmg\` | Abra e arraste para Aplicativos. Veja a observação abaixo. |"
             echo "| **Mac** com Intel | \`DescarregadorDeFotos-$VERSAO-macos-intel.dmg\` | Igual ao de cima. |"
             echo "| **Linux** (Ubuntu, Mint, Debian) | \`DescarregadorDeFotos-$VERSAO-linux-amd64.deb\` | Dê dois cliques e instale. O ícone aparece no menu. |"
             echo
-            echo "Todos os computadores do Servir devem estar na **mesma versão**. Para atualizar, instale a nova por cima: nenhum dado é perdido."
+            echo "**Só precisa instalar uma vez:** depois o programa se atualiza sozinho quando o PC estiver livre."
             echo
             echo "**Mac, na primeira vez:** o macOS avisa que não pode verificar o desenvolvedor. Abra *Ajustes do Sistema → Privacidade e Segurança*, desça até o aviso do Descarregador de Fotos e clique em **Abrir Mesmo Assim**. Também permita o acesso à rede local quando ele perguntar."
             echo
             echo "**Windows:** se aparecer \"O Windows protegeu o computador\", clique em *Mais informações → Executar assim mesmo*."
             echo
-            awk -v v="$VERSAO" '$0 ~ "^## \\[" v "\\]" {on=1; next} on && /^## \[/ {exit} on' CHANGELOG.md
+            echo "## O que mudou"
+            SECAO="$(awk -v v="$VERSAO" '$0 ~ "^## \\[" v "\\]" {on=1; next} on && /^## \[/ {exit} on' CHANGELOG.md)"
+            if [ -n "$SECAO" ]; then echo "$SECAO"
+            elif [ -n "$ANTERIOR" ]; then git log --no-merges --format='- %s' "v$ANTERIOR..HEAD"
+            fi
           } > notas.md
           cat notas.md
-      - name: Criar release
+      - name: Publicar
         run: |
-          gh release create "v$VERSAO" saida/* --title "Descarregador de Fotos v$VERSAO" --notes-file notas.md --verify-tag
+          gh release create "v$VERSAO" saida/* --target "$GITHUB_SHA" --title "Descarregador de Fotos v$VERSAO" --notes-file notas.md

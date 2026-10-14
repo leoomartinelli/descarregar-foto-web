@@ -144,6 +144,8 @@ def main():
     if EMPACOTADO:
         log_em_arquivo()
     carregar_env()
+    if "--sem-navegador" in sys.argv:          # reaberto pela atualizacao automatica: as abas abertas voltam sozinhas
+        os.environ["NO_BROWSER"] = "1"
     porta = int(os.environ.get("PORT", PORT))
     print(f"Iniciando na porta {porta} (pasta de dados: {BASE})")
     if ja_aberto(porta):

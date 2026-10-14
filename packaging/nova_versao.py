@@ -1,10 +1,12 @@
-"""Lanca uma nova versao com as regras do projeto. Uso:
+"""Muda a versao MAIOR ou MENOR. Uso:
 
-    python packaging/nova_versao.py 1.2.0
+    python packaging/nova_versao.py 1.1.0
 
-Confere: numero no formato X.Y.Z e MAIOR que o atual; arvore do git limpa; branch main atualizada com o GitHub;
-secao "## [1.2.0]" escrita no CHANGELOG.md. Depois grava o VERSION, faz o commit "release: v1.2.0" e cria a tag.
-Falta so publicar: git push origin main v1.2.0  (o GitHub Actions compila e cria a release)."""
+As correcoes (1.0.1, 1.0.2...) sao automaticas: cada push na main que muda o programa publica a seguinte. Este
+script e para quando voce quer marcar um passo maior (recurso novo = MENOR; mudanca que obriga todos os PCs a
+atualizarem juntos = MAIOR). Confere: formato X.Y.0, maior que a ultima versao publicada, arvore do git limpa, main
+atualizada com o GitHub e secao "## [1.1.0]" no CHANGELOG.md. Grava o VERSION e faz o commit; depois e so
+`git push`: o GitHub Actions compila, publica e os PCs se atualizam."""
 import os
 import re
 import subprocess
@@ -31,19 +33,19 @@ def main():
         parar("informe a versão. Ex.: python packaging/nova_versao.py 1.2.0")
     nova = sys.argv[1].lstrip("vV")
     atual = open(os.path.join(RAIZ, "VERSION"), encoding="utf-8").read().strip()
-    if not SEMVER.match(nova):
-        parar(f"'{nova}' não está no formato MAIOR.MENOR.CORREÇÃO (ex.: 1.2.0).")
-    if tupla(nova) <= tupla(atual):
-        parar(f"a nova versão ({nova}) precisa ser maior que a atual ({atual}).")
+    if not SEMVER.match(nova) or not nova.endswith(".0"):
+        parar(f"'{nova}' precisa ser MAIOR.MENOR.0 (ex.: 1.2.0). As correções são numeradas sozinhas.")
+    git("fetch", "origin", "main", "--tags")
+    tags = [t.lstrip("v") for t in git("tag", "-l", "v*").stdout.split() if SEMVER.match(t.lstrip("v"))]
+    publicada = max(tags, key=tupla) if tags else atual
+    if tupla(nova) <= tupla(max(atual, publicada, key=tupla)):
+        parar(f"a nova versão ({nova}) precisa ser maior que a atual (v{max(atual, publicada, key=tupla)}).")
     if git("status", "--porcelain").stdout.strip():
         parar("há alterações sem commit. Faça o commit (ou descarte) antes de lançar a versão.")
     if git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip() != "main":
         parar("lance versões a partir da branch main.")
-    git("fetch", "origin", "main", "--tags")
     if git("rev-parse", "HEAD").stdout != git("rev-parse", "origin/main").stdout:
         parar("a main local está diferente da do GitHub. Faça git pull / git push antes.")
-    if git("rev-parse", "-q", "--verify", f"refs/tags/v{nova}").returncode == 0:
-        parar(f"a tag v{nova} já existe.")
     changelog = open(os.path.join(RAIZ, "CHANGELOG.md"), encoding="utf-8").read()
     if f"## [{nova}]" not in changelog:
         parar(f"escreva no CHANGELOG.md a seção '## [{nova}] - AAAA-MM-DD' com o que mudou, faça o commit "
@@ -51,12 +53,12 @@ def main():
 
     with open(os.path.join(RAIZ, "VERSION"), "w", encoding="utf-8") as f:
         f.write(nova + "\n")
-    for cmd in (("add", "VERSION"), ("commit", "-m", f"release: v{nova}"), ("tag", "-a", f"v{nova}", "-m", f"v{nova}")):
+    for cmd in (("add", "VERSION"), ("commit", "-m", f"release: v{nova}")):
         r = git(*cmd)
         if r.returncode != 0:
             parar(f"git {' '.join(cmd)}: {r.stderr.strip()}")
-    print(f"Versão {atual} -> {nova} pronta (commit + tag v{nova}).")
-    print(f"Para publicar: git push origin main v{nova}")
+    print(f"Versão {atual} -> {nova} pronta (commit feito).")
+    print("Para publicar: git push   (o GitHub Actions compila, publica e os PCs se atualizam sozinhos)")
 
 
 if __name__ == "__main__":

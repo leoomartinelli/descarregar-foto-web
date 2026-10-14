@@ -4,6 +4,9 @@ import sys
 
 REPO = "leoomartinelli/descarregar-foto-web"
 URL_RELEASES = f"https://github.com/{REPO}/releases"
+# a variavel de ambiente existe so para o teste de atualizacao do GitHub Actions (servidor de releases falso)
+API_ULTIMA_RELEASE = os.environ.get("DESCARREGADOR_API_RELEASES") or \
+    f"https://api.github.com/repos/{REPO}/releases/latest"
 
 # Empacotado pelo PyInstaller: os arquivos do programa ficam em sys._MEIPASS (somente leitura) e os dados do
 # usuario numa pasta propria em casa, igual em Windows, macOS e Linux.
@@ -20,7 +23,8 @@ def _ler_versao():
         return "0.0.0"
 
 
-VERSAO = _ler_versao()
+# DESCARREGADOR_FINGIR_VERSAO: so no teste de atualizacao (faz o programa se achar antigo)
+VERSAO = os.environ.get("DESCARREGADOR_FINGIR_VERSAO") or _ler_versao()
 
 
 def tupla(v):

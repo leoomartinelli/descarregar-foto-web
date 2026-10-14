@@ -9,7 +9,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import core, drive, lan, painel, review, stats, transfer, versao
+from . import atualizador, core, drive, lan, painel, review, stats, transfer, versao
 from .core import E
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -89,6 +89,7 @@ def estado():
         "update": UPDATE,
         "precisa_reiniciar": precisa_reiniciar(),
         "versao": versao.VERSAO, "empacotado": versao.EMPACOTADO,
+        "atualizacao": atualizador.ESTADO,
     }
 
 
@@ -660,25 +661,11 @@ def lan_atividade():
 
 # ======================= atualizacao via git =======================
 
-def verificar_release():
-    """Executavel: compara a versao com a ultima release publicada no GitHub."""
-    try:
-        import requests
-        r = requests.get(f"https://api.github.com/repos/{versao.REPO}/releases/latest", timeout=8,
-                         headers={"Accept": "application/vnd.github+json"})
-        if r.status_code != 200:
-            return
-        rel = r.json()
-        if versao.tupla(rel.get("tag_name")) > versao.tupla(versao.VERSAO):
-            UPDATE.update(disponivel=True, url=rel.get("html_url") or versao.URL_RELEASES,
-                          msg=f"Nova versão disponível: {rel.get('tag_name')} (você está na v{versao.VERSAO}).")
-    except Exception as e:
-        print(f"[AutoUpdate] verificação ignorada: {e}")
-
-
 def verificar_atualizacao():
+    """Codigo-fonte: avisa quando o GitHub tem commits novos (atualiza com git pull). O programa instalado se
+    atualiza sozinho pelas releases (app/atualizador.py)."""
     if versao.EMPACOTADO:
-        return verificar_release()
+        return
     try:
         if not os.path.isdir(os.path.join(core.BASE_DIR, ".git")):
             return
@@ -708,7 +695,20 @@ def aplicar_atualizacao():
 @app.on_event("startup")
 def iniciar():
     drive.sincronizar_env()
+    retomar = atualizador.ler_retomar()        # reabriu depois de uma atualizacao automatica?
+    if retomar:
+        E.network_mode = retomar.get("modo") or E.network_mode
     lan.iniciar_servicos()
+    if retomar:
+        # volta como estava: Servir ativo, lider encontrado e PCs auxiliares conectados
+        if retomar.get("servir"):
+            core.ativar_servir(retomar["servir"])
+            if retomar.get("destino_base") and os.path.isdir(retomar["destino_base"]):
+                E.destino_base = retomar["destino_base"]
+        E.lider_detectado = retomar.get("lider")
+        E.auxiliar_stations.update(retomar.get("auxiliares") or {})
+        print(f"Atualizado de v{retomar.get('de_versao')} para v{versao.VERSAO}; Servir retomado.")
+    atualizador.iniciar()
     threading.Thread(target=transfer.monitorar_cartao, daemon=True).start()
     threading.Thread(target=verificar_atualizacao, daemon=True).start()
 

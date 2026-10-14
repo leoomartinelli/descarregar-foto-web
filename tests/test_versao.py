@@ -27,19 +27,6 @@ def test_comparacao_de_versoes():
     assert versao.tupla("") == (0, 0, 0)
 
 
-def test_aviso_de_release_nova(monkeypatch):
-    import requests
-    main.UPDATE.update(disponivel=False, msg="", url="")
-    monkeypatch.setattr(requests, "get", lambda *a, **k: Resp(200, {
-        "tag_name": "v99.0.0", "html_url": "https://github.com/x/releases/tag/v99.0.0"}))
-    main.verificar_release()
-    assert main.UPDATE["disponivel"] and main.UPDATE["url"].endswith("v99.0.0")
-    main.UPDATE.update(disponivel=False, msg="", url="")
-    monkeypatch.setattr(requests, "get", lambda *a, **k: Resp(200, {"tag_name": f"v{versao.VERSAO}"}))
-    main.verificar_release()
-    assert not main.UPDATE["disponivel"]                    # mesma versao: sem aviso
-
-
 def test_versao_de_cada_pc_no_painel(monkeypatch):
     sv = criar_servir()
     assert local.post("/register", json={"ip": "10.0.0.8", "nome": "PC-VELHO", "port": 50007,
@@ -72,6 +59,5 @@ def test_programa_instalado_nao_chama_o_git(monkeypatch):
     for _ in range(3):
         main._cache_reinicio["t"] = 0          # forca a verificacao de "precisa reiniciar"
         assert local.get("/api/state").json()["precisa_reiniciar"] is False
-    monkeypatch.setattr(main, "verificar_release", lambda: None)
     main.verificar_atualizacao()
     assert chamadas == []

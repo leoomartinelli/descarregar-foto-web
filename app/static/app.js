@@ -687,4 +687,35 @@ async function uploadsAtualiza() {
 }
 setInterval(uploadsAtualiza, 1500); uploadsAtualiza();
 
+// ---------- atualizacao automatica (programa instalado) ----------
+// o programa fecha e reabre na versao nova sozinho; a tela mostra o andamento e recarrega quando ele volta
+const $atu = document.createElement('div'); $atu.className = 'banner hidden'; document.body.prepend($atu);
+let verVista = null, instalando = false, semConexao = false;
+function bannerAtualizacao(a) {
+  const mostrar = a && ['pronta', 'instalando', 'manual'].includes(a.estado);
+  $atu.classList.toggle('hidden', !mostrar); if (!mostrar) return;
+  $atu.style.background = a.estado === 'instalando' ? 'var(--lar)' : '';
+  $atu.innerHTML = (a.estado === 'instalando' ? '🔄 ' : a.estado === 'pronta' ? '⬇️ ' : '') + esc(a.msg) +
+    (a.estado === 'manual' && a.url ? ' <button id="atu-baixar">⬇ Baixar</button>' : '');
+  const b = $atu.querySelector('#atu-baixar'); if (b) b.onclick = () => window.open(a.url, '_blank');
+}
+async function vigiaAtualizacao() {
+  if (S.encerrado) return;
+  try {
+    const st = await api('/api/state');
+    if (verVista && st.versao !== verVista) {         // voltou na versao nova: recarrega a tela
+      try { if (S.entrou) sessionStorage.setItem('voltarDescarregar', '1'); } catch (e) { }
+      return location.reload();
+    }
+    verVista = st.versao; instalando = st.atualizacao && st.atualizacao.estado === 'instalando';
+    bannerAtualizacao(st.atualizacao);
+    if (semConexao) { semConexao = false; render(); }  // o programa voltou (mesma versao, se a instalacao falhou)
+  } catch (e) {
+    semConexao = true;
+    if (instalando) bannerAtualizacao({ estado: 'instalando', msg: 'Atualizando o programa… a tela volta sozinha em instantes.' });
+  }
+}
+setInterval(vigiaAtualizacao, 4000); vigiaAtualizacao();
+try { if (sessionStorage.getItem('voltarDescarregar')) { sessionStorage.removeItem('voltarDescarregar'); S.entrou = true; } } catch (e) { }
+
 render();
