@@ -119,7 +119,8 @@ def test_scripts_de_instalacao(monkeypatch):
     assert "mv \"$APP.velho\" \"$APP\"" in mac                  # falhou: volta a versao antiga
     win = atualizador._script_windows(r"C:\Users\João\Descarregador de Fotos\atualizacao\inst.exe",
                                       r"C:\Users\João\AppData\Local\Programs\Descarregador de Fotos\D.exe")
-    assert "'/VERYSILENT'" in win and "'/REABRIR=1'" in win and "ExitCode -ne 0" in win
+    assert "/VERYSILENT" in win and "/REABRIR=1" in win and "ExitCode -ne 0" in win
+    assert '/LOG="C:' in win                                     # caminho com espacos vai entre aspas
     assert "João" in win
 
 

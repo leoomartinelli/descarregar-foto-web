@@ -206,7 +206,9 @@ jobs:
           esac
           r=0; python packaging/teste_atualizacao.py "$EXE" "$RUNNER_TEMP/releases" || r=$?
           echo "--- log do programa"; cat "$HOME/Descarregador de Fotos/descarregador.log" 2>/dev/null | tail -30 || true
-          echo "--- log da instalação"; cat "$HOME/Descarregador de Fotos/atualizacao/aplicar.log" 2>/dev/null || true
+          for f in aplicar.log passos.log instalador.log; do
+            echo "--- $f"; cat "$HOME/Descarregador de Fotos/atualizacao/$f" 2>/dev/null | tail -40 || true
+          done
           exit $r
 
       - uses: actions/upload-artifact@v4

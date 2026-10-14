@@ -157,11 +157,19 @@ def _ambiente_limpo():
 
 def _script_windows(instalador, exe):
     log = os.path.join(PASTA, "instalador.log")
-    q = lambda s: "'" + s.replace("'", "''") + "'"   # noqa: E731  (texto entre aspas simples no PowerShell)
-    return (f"$p = Start-Process -FilePath {q(instalador)} -Wait -PassThru -ArgumentList "
-            f"'/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/REABRIR=1',{q('/LOG=' + log)}\n"
-            # o instalador reabre a versao nova; se ele falhar, reabre a antiga
-            f"if ($p.ExitCode -ne 0) {{ Start-Process -FilePath {q(exe)} -ArgumentList '--sem-navegador' }}\n")
+    q = lambda t: "'" + t.replace("'", "''") + "'"   # noqa: E731  (texto entre aspas simples no PowerShell)
+    # Start-Process junta os argumentos com espaco sem colocar aspas: o caminho do log (com espacos) vai entre aspas
+    return f"""$ErrorActionPreference = 'Continue'
+function Passo($t) {{ Add-Content -Path {q(os.path.join(PASTA, "passos.log"))} -Value "$(Get-Date -Format s) $t" }}
+Passo 'esperando o programa fechar'
+Start-Sleep -Seconds 3
+Passo 'rodando o instalador'
+$p = Start-Process -FilePath {q(instalador)} -PassThru -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /REABRIR=1 /LOG={'"' + log.replace("'", "''") + '"'}'
+$p.WaitForExit()
+Passo "instalador terminou: codigo $($p.ExitCode)"
+# o instalador reabre a versao nova; se ele falhar, reabre a antiga
+if ($p.ExitCode -ne 0) {{ Passo 'reabrindo a versao antiga'; Start-Process -FilePath {q(exe)} -ArgumentList '--sem-navegador' }}
+"""
 
 
 def _script_unix(tipo, arquivo):
