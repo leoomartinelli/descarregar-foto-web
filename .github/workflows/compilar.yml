@@ -1,0 +1,231 @@
+# Compila o Descarregador de Fotos para Windows, macOS (Apple Silicon e Intel) e Linux, testa cada programa
+# compilado (autoteste + protocolo da rede Líder/Auxiliar + instalação) e, numa tag vX.Y.Z, publica a release.
+#
+# - push na main / pull request: testa e compila (os programas ficam em "Artifacts" da execução)
+# - tag vX.Y.Z (ver packaging/nova_versao.py): tudo acima + release pública com os instaladores
+name: Compilar
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: compilar-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+env:
+  PYTHON: "3.12"
+  PYINSTALLER: "6.22.3"
+
+jobs:
+  versao:
+    name: Versão
+    runs-on: ubuntu-latest
+    outputs:
+      versao: ${{ steps.v.outputs.versao }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        name: Conferir VERSION, CHANGELOG e tag
+        shell: bash
+        run: |
+          VERSAO="$(tr -d '[:space:]' < VERSION)"
+          echo "Versão: $VERSAO"
+          [[ "$VERSAO" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::VERSION '$VERSAO' não é MAIOR.MENOR.CORREÇÃO"; exit 1; }
+          grep -q "^## \[$VERSAO\]" CHANGELOG.md || { echo "::error::CHANGELOG.md sem a seção '## [$VERSAO]'"; exit 1; }
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            [[ "$GITHUB_REF_NAME" == "v$VERSAO" ]] || { echo "::error::tag $GITHUB_REF_NAME diferente do VERSION (v$VERSAO)"; exit 1; }
+          fi
+          echo "versao=$VERSAO" >> "$GITHUB_OUTPUT"
+
+  testes:
+    name: Testes (${{ matrix.os }})
+    needs: versao
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON }}
+          cache: pip
+      - run: pip install -r requirements.txt pytest httpx
+      - run: python -m pytest tests -q
+
+  compilar:
+    name: Compilar ${{ matrix.nome }}
+    needs: [versao, testes]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { nome: windows, os: windows-latest }
+          # Ubuntu 22.04: o programa compilado roda nas distribuições de 2022 em diante
+          - { nome: linux, os: ubuntu-22.04 }
+          - { nome: macos-apple-silicon, os: macos-14 }
+          - { nome: macos-intel, os: macos-15-intel }
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSAO: ${{ needs.versao.outputs.versao }}
+      NO_BROWSER: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON }}
+          cache: pip
+      - name: Dependências
+        run: pip install -r requirements.txt "pyinstaller==${{ env.PYINSTALLER }}"
+
+      - name: Informações de versão do .exe
+        if: runner.os == 'Windows'
+        run: python packaging/versao_windows.py
+
+      - name: PyInstaller
+        run: pyinstaller --noconfirm packaging/descarregador.spec
+
+      # ---------- autoteste do programa compilado ----------
+      - name: Autoteste (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\DescarregadorDeFotos\DescarregadorDeFotos.exe" -ArgumentList "--autoteste" -Wait -PassThru
+          Get-Content "$env:USERPROFILE\Descarregador de Fotos\autoteste.txt"
+          if ($p.ExitCode -ne 0) { exit 1 }
+      - name: Autoteste (Linux)
+        if: runner.os == 'Linux'
+        run: dist/DescarregadorDeFotos/DescarregadorDeFotos --autoteste
+      - name: Autoteste (macOS)
+        if: runner.os == 'macOS'
+        run: '"dist/Descarregador de Fotos.app/Contents/MacOS/DescarregadorDeFotos" --autoteste'
+
+      # ---------- rede Líder/Auxiliar contra o programa aberto ----------
+      - name: Rede Líder/Auxiliar (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Start-Process -FilePath "dist\DescarregadorDeFotos\DescarregadorDeFotos.exe"
+          python packaging/teste_rede.py 50007
+          $r = $LASTEXITCODE
+          Invoke-RestMethod -Method Post http://127.0.0.1:50007/api/encerrar | Out-Null
+          Get-Content "$env:USERPROFILE\Descarregador de Fotos\descarregador.log" -ErrorAction SilentlyContinue
+          exit $r
+      - name: Rede Líder/Auxiliar (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then BIN="dist/Descarregador de Fotos.app/Contents/MacOS/DescarregadorDeFotos"
+          else BIN=dist/DescarregadorDeFotos/DescarregadorDeFotos; fi
+          "$BIN" &
+          r=0; python packaging/teste_rede.py 50007 || r=$?
+          curl -s -X POST http://127.0.0.1:50007/api/encerrar || true
+          cat "$HOME/Descarregador de Fotos/descarregador.log" || true
+          exit $r
+
+      # ---------- pacotes ----------
+      - name: Instalador e versão portátil (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          & $iscc "/DVersao=$env:VERSAO" packaging\windows\instalador.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Compress-Archive -Path dist\DescarregadorDeFotos -DestinationPath "saida\DescarregadorDeFotos-$env:VERSAO-windows-portatil.zip"
+          Get-ChildItem saida
+      - name: Pacotes .deb e .tar.gz (Linux)
+        if: runner.os == 'Linux'
+        run: packaging/linux/montar_pacotes.sh
+      - name: Imagem .dmg (macOS)
+        if: runner.os == 'macOS'
+        run: packaging/macos/montar_dmg.sh "${{ matrix.nome == 'macos-intel' && 'intel' || 'apple-silicon' }}"
+
+      # ---------- instala o pacote como o usuário faria e testa de novo ----------
+      - name: Instalar e testar (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem "saida\*-windows-instalador.exe" | Select-Object -First 1
+          Start-Process -FilePath $setup.FullName -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait
+          $exe = "$env:ProgramFiles\Descarregador de Fotos\DescarregadorDeFotos.exe"
+          if (-not (Test-Path $exe)) { Write-Error "programa não instalado"; exit 1 }
+          if (-not (Test-Path "$env:PUBLIC\Desktop\Descarregador de Fotos.lnk")) { Write-Error "sem ícone na Área de Trabalho"; exit 1 }
+          netsh advfirewall firewall show rule name="Descarregador de Fotos"
+          if ($LASTEXITCODE -ne 0) { Write-Error "regra do firewall não criada"; exit 1 }
+          $p = Start-Process -FilePath $exe -ArgumentList "--autoteste" -Wait -PassThru
+          Get-Content "$env:USERPROFILE\Descarregador de Fotos\autoteste.txt"
+          if ($p.ExitCode -ne 0) { exit 1 }
+          (Get-Item $exe).VersionInfo | Format-List ProductVersion, FileVersion, FileDescription
+          if ((Get-Item $exe).VersionInfo.ProductVersion -ne $env:VERSAO) { Write-Error "versão do .exe errada"; exit 1 }
+      - name: Instalar e testar (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y ./saida/*.deb
+          test -f /usr/share/applications/descarregador-de-fotos.desktop
+          dpkg-query -W -f='${Version}\n' descarregador-de-fotos | grep -qx "$VERSAO"
+          descarregador-de-fotos --autoteste
+      - name: Instalar e testar (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          DMG="$(ls saida/*.dmg)"
+          hdiutil attach "$DMG" -nobrowse -mountpoint /tmp/dmg
+          cp -R "/tmp/dmg/Descarregador de Fotos.app" /Applications/
+          hdiutil detach /tmp/dmg
+          defaults read "/Applications/Descarregador de Fotos.app/Contents/Info" CFBundleShortVersionString | grep -qx "$VERSAO"
+          "/Applications/Descarregador de Fotos.app/Contents/MacOS/DescarregadorDeFotos" --autoteste
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DescarregadorDeFotos-${{ env.VERSAO }}-${{ matrix.nome }}
+          path: saida/*
+          if-no-files-found: error
+
+  release:
+    name: Publicar release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [versao, compilar]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSAO: ${{ needs.versao.outputs.versao }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: saida
+          merge-multiple: true
+      - name: Notas da release
+        run: |
+          cd saida && sha256sum * > SHA256SUMS.txt && cd ..
+          {
+            echo "## Como instalar"
+            echo "| Sistema | Baixe | Depois |"
+            echo "|---|---|---|"
+            echo "| **Windows** 10/11 | \`DescarregadorDeFotos-$VERSAO-windows-instalador.exe\` | Abra e clique em Avançar. O ícone aparece na Área de Trabalho. |"
+            echo "| **Mac** com chip Apple (M1, M2…) | \`DescarregadorDeFotos-$VERSAO-macos-apple-silicon.dmg\` | Abra e arraste para Aplicativos. Veja a observação abaixo. |"
+            echo "| **Mac** com Intel | \`DescarregadorDeFotos-$VERSAO-macos-intel.dmg\` | Igual ao de cima. |"
+            echo "| **Linux** (Ubuntu, Mint, Debian) | \`DescarregadorDeFotos-$VERSAO-linux-amd64.deb\` | Dê dois cliques e instale. O ícone aparece no menu. |"
+            echo
+            echo "Todos os computadores do Servir devem estar na **mesma versão**. Para atualizar, instale a nova por cima: nenhum dado é perdido."
+            echo
+            echo "**Mac, na primeira vez:** o macOS avisa que não pode verificar o desenvolvedor. Abra *Ajustes do Sistema → Privacidade e Segurança*, desça até o aviso do Descarregador de Fotos e clique em **Abrir Mesmo Assim**. Também permita o acesso à rede local quando ele perguntar."
+            echo
+            echo "**Windows:** se aparecer \"O Windows protegeu o computador\", clique em *Mais informações → Executar assim mesmo*."
+            echo
+            awk -v v="$VERSAO" '$0 ~ "^## \\[" v "\\]" {on=1; next} on && /^## \[/ {exit} on' CHANGELOG.md
+          } > notas.md
+          cat notas.md
+      - name: Criar release
+        run: |
+          gh release create "v$VERSAO" saida/* --title "Descarregador de Fotos v$VERSAO" --notes-file notas.md --verify-tag

@@ -9,7 +9,11 @@ import threading
 import time
 from datetime import date
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from .versao import EMPACOTADO, PASTA_USUARIO
+
+# Rodando do codigo-fonte: dados ao lado do codigo (como sempre). Empacotado (executavel): o programa fica numa
+# pasta somente leitura, entao dados, fotos e .env vao para ~/Descarregador de Fotos.
+BASE_DIR = PASTA_USUARIO if EMPACOTADO else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # DATA_DIR / FOTOS_DIR permitem apontar para outras pastas (usado nos testes, para nao tocar nos dados reais)
 DATA_DIR = os.environ.get("DATA_DIR") or os.path.join(BASE_DIR, "data")
 DEFAULT_DEST = os.environ.get("FOTOS_DIR") or os.path.join(BASE_DIR, "Fotos_Sistema")

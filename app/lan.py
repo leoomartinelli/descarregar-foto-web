@@ -11,6 +11,7 @@ import requests
 
 from . import core, stats
 from .core import E
+from .versao import VERSAO
 
 UDP_PORT = 50008
 _geracao = 0
@@ -87,7 +88,8 @@ def sincronizar_com_lider():
         raise RuntimeError("Nenhum lider detectado na rede.")
     ip, port = E.lider_detectado["ip"], E.lider_detectado["port"]
     r = requests.post(f"http://{ip}:{port}/register", timeout=3.0, json={
-        "ip": core.obter_ip_local(), "nome": platform.node() or "Estação Auxiliar", "port": E.local_port})
+        "ip": core.obter_ip_local(), "nome": platform.node() or "Estação Auxiliar", "port": E.local_port,
+        "versao": VERSAO})
     if r.status_code != 200:
         raise RuntimeError(f"Não foi possível se registrar no líder: código {r.status_code}")
     r = requests.get(f"http://{ip}:{port}/preset", timeout=3.0)

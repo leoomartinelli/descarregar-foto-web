@@ -67,6 +67,8 @@ function escolherPasta(titulo, inicio) {
 
 async function carregar() { S.st = await api('/api/state'); const b = document.getElementById('banner'); const u = S.st.update;
   if (S.st.precisa_reiniciar) { b.classList.remove('hidden'); b.style.background = 'var(--lar)'; b.innerHTML = '⚠️ O programa foi atualizado. <b>Feche o servidor (Ctrl+C no terminal) e abra de novo</b> (rodar.sh / rodar.bat) para aplicar as mudanças.'; }
+  else if (u && u.disponivel && u.url) { b.style.background = ''; b.classList.remove('hidden');   // programa instalado: baixa o novo instalador
+    b.innerHTML = `${esc(u.msg)} <button id="b-up">⬇ Baixar nova versão</button>`; document.getElementById('b-up').onclick = () => window.open(u.url, '_blank'); }
   else if (u && u.disponivel) { b.style.background = ''; b.classList.remove('hidden'); b.innerHTML = `${esc(u.msg)} <button id="b-up">Atualizar agora</button>`;
     document.getElementById('b-up').onclick = async () => { try { const r = await api('/api/update/aplicar', { body: {} }); toast(r.msg); b.classList.add('hidden'); } catch (e) { toast(e.message, true); } };
   } else b.classList.add('hidden'); }
@@ -195,8 +197,8 @@ async function vHome() {
   const dias = await api('/api/servir'); const f = S.form; const editando = !!S.editId;
   const r = st.rede;
   $app.innerHTML = `<div class="wrap">
-  <div class="topbar"><h1>📸 Descarregador de Fotos — Painel Inicial</h1>
-   <div class="acts"><button data-go="google">🔑 Login Google</button><button data-go="predef">📋 Predefinições</button><button data-go="historico">📊 Histórico</button><button data-go="drive">⚙️ Config Drive</button></div></div>
+  <div class="topbar"><div><h1>📸 Descarregador de Fotos — Painel Inicial</h1><div class="mut mini">Versão ${esc(st.versao)}</div></div>
+   <div class="acts"><button data-go="google">🔑 Login Google</button><button data-go="predef">📋 Predefinições</button><button data-go="historico">📊 Histórico</button><button data-go="drive">⚙️ Config Drive</button><button class="verm" id="b-sair" title="Fecha o programa neste computador">⏻ Encerrar</button></div></div>
   <div class="grid"><div>
     <div class="card"><h2 class="${editando ? 'warn' : 'ok'}">${editando ? '✏️ Editando Dia do Servir' : 'Criar Novo Dia do Servir'}</h2>
      <label>Nome do Servir</label><input type="text" id="f-nome" value="${esc(f.nome)}" placeholder="Ex.: Culto de Domingo">
@@ -223,7 +225,7 @@ async function vHome() {
     <div class="card"><h2>🌐 Rede Local (várias estações)</h2>
      <div class="row"><select id="n-modo"><option value="lider" ${r.modo === 'lider' ? 'selected' : ''}>Estação Líder</option><option value="auxiliar" ${r.modo === 'auxiliar' ? 'selected' : ''}>Estação Auxiliar</option></select><button class="fix cinza" id="n-rein">Reiniciar rede</button></div>
      <p class="mut mini">Este computador: ${esc(r.ip)}:${r.porta}</p>
-     ${r.modo === 'lider' ? `<h3>Estações conectadas</h3>${r.auxiliares.map(a => `<div class="item"><span>💻 ${esc(a.nome)} (${esc(a.ip)})</span><span class="ok mini">🟢 Conectado</span></div>`).join('') || '<p class="mut mini">Nenhuma estação conectada. Ative um Servir para transmitir na rede.</p>'}`
+     ${r.modo === 'lider' ? `<h3>Estações conectadas</h3>${r.auxiliares.map(a => `<div class="item"><span>💻 ${esc(a.nome)} (${esc(a.ip)}) <span class="mini ${a.versao === st.versao ? 'mut' : 'warn'}">${a.versao ? 'v' + esc(a.versao) : 'versão desconhecida'}${a.versao === st.versao ? '' : ' ⚠️ diferente deste PC (v' + esc(st.versao) + ') — atualize'}</span></span><span class="ok mini">🟢 Conectado</span></div>`).join('') || '<p class="mut mini">Nenhuma estação conectada. Ative um Servir para transmitir na rede.</p>'}`
       : (r.lider ? `<p class="ok">🟢 LÍDER ENCONTRADO!</p><p>Evento: <b>${esc(r.lider.nome_evento)}</b><br><span class="mut mini">Líder IP: ${esc(r.lider.ip)}:${r.lider.port}</span></p><button class="verde" id="n-sync">🔗 Conectar e Sincronizar</button>`
         : '<p class="warn">🔍 Procurando Líder na rede local...</p>')}
     </div></div></div></div>`;
@@ -270,6 +272,12 @@ async function vHome() {
       await api('/api/servir/' + d.id, { method: 'DELETE' }); vHome();
     }
   });
+  q('#b-sair').onclick = async () => {
+    if (!await confirmar('Encerrar programa', 'Fechar o Descarregador de Fotos neste computador?\n\nEnvios ao Drive em andamento serão interrompidos. Para abrir de novo, clique no ícone do programa.', 'Encerrar', 'Cancelar')) return;
+    try { await api('/api/encerrar', { body: {} }); } catch (e) { }
+    pararPoll(); $app.innerHTML = '<div class="wrap"><div class="card"><h2>Programa encerrado</h2><p class="mut">Pode fechar esta aba. Para abrir de novo, clique no ícone do Descarregador de Fotos.</p></div></div>';
+    S.encerrado = true;
+  };
   q('#b-avulso').onclick = async () => { await api('/api/avulso', { body: {} }); S.avulso = true; S.entrou = true; ir('descarregar'); };
   q('#n-modo').onchange = async e => { ler(); await api('/api/rede/modo', { body: { modo: e.target.value } }); await carregar(); vHome(); };
   q('#n-rein').onclick = async () => { await api('/api/rede/reiniciar', { body: {} }); toast('Serviços de rede local reiniciados com sucesso!'); await carregar(); vHome(); };

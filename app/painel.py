@@ -16,6 +16,7 @@ import requests
 
 from . import core
 from .core import E
+from .versao import VERSAO
 
 TIMEOUT_AUX = 1.5
 _cache = {"t": 0.0, "dados": None}
@@ -75,7 +76,7 @@ def atividade_local():
         a["segundos"] = round(time.time() - E.atividade.get("inicio_ts", time.time()), 1)
         if a.get("fase") == "copiando":
             a["feitos"], a["total"] = E.transfer.get("feitos", 0), E.transfer.get("total", 0)
-    return {"nome": platform.node() or "Estação", "servir_id": (E.active_servir or {}).get("id"),
+    return {"nome": platform.node() or "Estação", "versao": VERSAO, "servir_id": (E.active_servir or {}).get("id"),
             "atividade": a, "descarregados": resumo_descarregamentos(), "uploads": uploads_locais()}
 
 
@@ -135,7 +136,7 @@ def qr_svg(texto):
 
 def _consultar_auxiliar(ip, info):
     est = {"nome": info.get("nome") or ip, "ip": ip, "papel": "auxiliar", "online": False, "atividade": None,
-           "descarregados": [], "uploads": []}
+           "descarregados": [], "uploads": [], "versao": info.get("versao")}
     try:
         r = requests.get(f"http://{ip}:{info.get('port', 50007)}/atividade", timeout=TIMEOUT_AUX)
     except Exception:
@@ -144,6 +145,7 @@ def _consultar_auxiliar(ip, info):
     if r.status_code == 200:
         d = r.json()
         est["atividade"] = d.get("atividade")
+        est["versao"] = d.get("versao") or est["versao"]
         # descarregamentos de outro Servir (auxiliar ainda nao sincronizou o atual) nao entram na conta
         if d.get("servir_id") == (E.active_servir or {}).get("id"):
             est["descarregados"] = d.get("descarregados") or []
@@ -161,6 +163,7 @@ def _montar():
         return {"modo": "lider", "servir": None}
     local = atividade_local()
     estacoes = [{"nome": local["nome"], "ip": core.obter_ip_local(), "papel": "lider", "online": True,
+                 "versao": VERSAO,
                  "atividade": local["atividade"], "descarregados": local["descarregados"],
                  "uploads": local["uploads"]}]
     aux = list(E.auxiliar_stations.items())
@@ -205,8 +208,11 @@ def _montar():
     return {
         "modo": "lider",
         "servir": {"id": servir.get("id"), "nome": servir.get("nome"), "data": servir.get("data_criacao")},
-        "estacoes": [{k: e.get(k) for k in ("nome", "ip", "papel", "online", "atividade", "sem_suporte")}
+        "estacoes": [{k: e.get(k) for k in ("nome", "ip", "papel", "online", "atividade", "sem_suporte", "versao")}
                      for e in estacoes],
+        # PCs com versao diferente da do lider (ou que nao informam a versao): podem nao se entender direito
+        "versao_lider": VERSAO,
+        "versoes_diferentes": [e["nome"] for e in estacoes if e["online"] and e.get("versao") != VERSAO],
         "agora": agora, "ja_descarregaram": ja, "faltam": faltam, "uploads": uploads,
         "gerais": {"total_fotos": sum(v["fotos"] for v in ja), "descarregamentos": sum(v["vezes"] for v in ja),
                    "voluntarios": len(servir.get("voluntarios", [])), "ja_descarregaram": len(ja),
