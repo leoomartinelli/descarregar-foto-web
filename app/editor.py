@@ -56,12 +56,32 @@ _worker = None
 # ---------- ajustes ----------
 
 CANAIS_CURVA = ("master", "red", "green", "blue")     # curva de pontos: RGB e cada cor
-GRUPOS = {"luz": "Luz", "curva": "Curva de tons", "cor": "Cor (inclui equilíbrio de branco)"}   # para copiar/colar
+GRUPOS = {"luz": "Luz", "curva": "Curva de tons", "cor": "Cor (inclui equilíbrio de branco)",
+          "corte": "Corte e endireitar"}                                            # para copiar/colar
+CORTE_INTEIRO = [0.0, 0.0, 1.0, 1.0]
 
 
 def ajustes_padrao():
     return {"valores": {c: v[4] for c, v in CONTROLES.items() if v[4] is not None}, "wb": {"modo": "asShot"},
-            "curva": {}}
+            "curva": {}, "corte": None}
+
+
+def _corte(c):
+    """Corte: {"rect": [x0, y0, x1, y1] de 0 a 1 (na foto ja endireitada), "angulo": -45..45, "proporcao": nome}.
+    Sem corte (foto inteira e reta) vira None."""
+    if not isinstance(c, dict):
+        return None
+    try:
+        x0, y0, x1, y1 = (min(1.0, max(0.0, float(v))) for v in c.get("rect") or CORTE_INTEIRO)
+        angulo = min(45.0, max(-45.0, float(c.get("angulo") or 0)))
+    except (TypeError, ValueError):
+        return None
+    if x1 - x0 < 0.02 or y1 - y0 < 0.02:          # retangulo invertido ou minusculo: ignora
+        return None
+    rect = [round(v, 5) for v in (x0, y0, x1, y1)]
+    if abs(angulo) < 0.01 and rect == CORTE_INTEIRO:
+        return None
+    return {"rect": rect, "angulo": round(angulo, 2), "proporcao": str(c.get("proporcao") or "livre")[:12]}
 
 
 def _pontos(pts):
@@ -90,7 +110,8 @@ def limpar(aj):
     wb = aj.get("wb") or {}
     modo = wb.get("modo") if wb.get("modo") in MODOS_WB else "asShot"
     curva = {c: _pontos((aj.get("curva") or {}).get(c)) for c in CANAIS_CURVA}
-    saida = {"valores": valores, "wb": {"modo": modo}, "curva": {c: p for c, p in curva.items() if p}}
+    saida = {"valores": valores, "wb": {"modo": modo}, "curva": {c: p for c, p in curva.items() if p},
+             "corte": _corte(aj.get("corte"))}
     # os modos prontos (Tungstenio, Nublado...) tambem levam temperatura e matiz: o LightCraft revela pelos numeros,
     # o modo e so o nome. "Como fotografado" usa os da propria foto.
     if modo != "asShot" and wb.get("temp") is not None:
@@ -103,7 +124,7 @@ def limpar(aj):
 
 def e_padrao(aj):
     aj = limpar(aj)
-    return aj["wb"]["modo"] == "asShot" and not aj["curva"] and \
+    return aj["wb"]["modo"] == "asShot" and not aj["curva"] and not aj["corte"] and \
         all(abs(v - CONTROLES[c][4]) < 1e-9 for c, v in aj["valores"].items())
 
 
@@ -115,6 +136,9 @@ def para_lightcraft(aj):
         secao, campo = c.split(".")
         s[secao][campo] = v
     s["curve"].update(aj["curva"])                      # curva de pontos: {"master": [[x, y], ...], ...}
+    if aj["corte"]:                                     # o LightCraft corta na resolucao original (sem reduzir a foto)
+        x0, y0, x1, y1 = aj["corte"]["rect"]
+        s["crop"] = {"geometry": {"angle": aj["corte"]["angulo"], "rect": {"x0": x0, "y0": y0, "x1": x1, "y1": y1}}}
     s["wb"] = {"mode": aj["wb"]["modo"]}
     if "temp" in aj["wb"]:
         s["wb"].update(temp=aj["wb"]["temp"], tint=aj["wb"]["tint"])
@@ -239,6 +263,19 @@ def balanco(foto, modo=None, x=None, y=None, aj=None):
     return {"modo": wb["mode"], "temp": round(wb["temp"]), "tint": round(wb["tint"])}
 
 
+def corte_valido(foto, rect=None, angulo=0.0):
+    """O LightCraft confere o corte: com a foto endireitada nao pode sobrar canto vazio. Devolve a maior area
+    possivel com esse angulo ("maximo") e o retangulo pedido ajustado para caber nela ("rect")."""
+    angulo = min(45.0, max(-45.0, float(angulo or 0)))
+    rect = [min(1.0, max(0.0, float(v))) for v in (rect or CORTE_INTEIRO)]
+    res = _comandos(_copia_reduzida(original_de(foto)), [
+        ("crop.set", {"rect": CORTE_INTEIRO, "angle": angulo}), ("develop.get", {}),
+        ("crop.set", {"rect": rect, "angle": angulo}), ("develop.get", {})])
+    para_lista = lambda r: [round(r["x0"], 5), round(r["y0"], 5), round(r["x1"], 5), round(r["y1"], 5)]  # noqa: E731
+    return {"maximo": para_lista(res[1]["crop"]["geometry"]["rect"]), "rect": para_lista(res[3]["crop"]["geometry"]["rect"]),
+            "angulo": angulo}
+
+
 def previa(foto, aj, lado=1400):
     """lado=0: tamanho cheio a partir da original (zoom do editor, ~1 s); senao da copia reduzida (~0,2 s)."""
     if int(lado) == 0:
@@ -266,7 +303,7 @@ def _grupo(controle):
 def mesclar(base, copiados, grupos):
     """Ajustes de `base` com os grupos escolhidos (luz, curva, cor) trocados pelos de `copiados`."""
     base, copiados = limpar(base), limpar(copiados)
-    grupos = set(grupos or GRUPOS)
+    grupos = set(grupos or ("luz", "curva", "cor"))
     novo = {"valores": {c: v for c, v in base["valores"].items() if _grupo(c) not in grupos},
             "wb": base["wb"], "curva": {} if "curva" in grupos else base["curva"]}
     novo["valores"].update({c: v for c, v in copiados["valores"].items() if _grupo(c) in grupos})
@@ -274,6 +311,7 @@ def mesclar(base, copiados, grupos):
         novo["wb"] = copiados["wb"]
     if "curva" in grupos:
         novo["curva"] = copiados["curva"]
+    novo["corte"] = copiados["corte"] if "corte" in grupos else base["corte"]
     return limpar(novo)
 
 

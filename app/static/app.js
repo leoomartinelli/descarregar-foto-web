@@ -612,7 +612,10 @@ const ED_CANAIS = [['master', 'RGB', '#e8e8e8'], ['red', 'Vermelho', '#ff5a5a'],
 const T_MIN = Math.log(2000), T_MAX = Math.log(50000);           // temperatura em escala logaritmica (mais facil de ajustar)
 const tPos = t => Math.round((Math.log(t) - T_MIN) / (T_MAX - T_MIN) * 1000), tVal = p => Math.round(Math.exp(T_MIN + p / 1000 * (T_MAX - T_MIN)) / 50) * 50;
 const edGrupo = c => c.startsWith('wb.') || c.startsWith('color.') ? 'cor' : c.startsWith('curve.') ? 'curva' : 'luz';
-const edCopia = { ajustes: null, grupos: ['luz', 'curva', 'cor'] };   // area de transferencia (vale enquanto a pagina estiver aberta)
+const edCopia = { ajustes: null, grupos: ['luz', 'curva', 'cor'] };   // o corte so vai junto se marcar (cada foto tem o seu)
+// proporcoes do corte: [id, nome, largura/altura em pixels; null = livre, 0 = a da propria foto]
+const ED_PROPORCOES = [['livre', 'Livre', null], ['original', 'Original', 0], ['1x1', '1:1 quadrado', 1], ['4x5', '4:5', 4 / 5],
+  ['2x3', '2:3', 2 / 3], ['3x4', '3:4', 3 / 4], ['16x9', '16:9', 16 / 9], ['9x16', '9:16 stories', 9 / 16]];
 
 // curva suave que passa pelos pontos (monotona, como as curvas de tons dos editores de foto)
 function curvaSuave(pts) {
@@ -643,7 +646,8 @@ const ED_ICONES = {
   varias: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
   zerar: '<path d="M3 12a9 9 0 109-9 9.7 9.7 0 00-6.7 2.8L3 8"/><path d="M3 3v5h5"/>',
   original: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 8"/>',
-  ok: '<path d="M20 6L9 17l-5-5"/>', lixo: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>', salvar: '<path d="M12 5v14M5 12h14"/>', teclado: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
+  ok: '<path d="M20 6L9 17l-5-5"/>', cortar: '<path d="M6 2v14a2 2 0 002 2h14"/><path d="M18 22V8a2 2 0 00-2-2H2"/>',
+  girar: '<path d="M21 12a9 9 0 11-3-6.7L21 8"/><path d="M21 3v5h-5"/>', lixo: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>', salvar: '<path d="M12 5v14M5 12h14"/>', teclado: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
   conta: '<path d="M2 22l1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="M15 6l3-3a2.1 2.1 0 013 3l-3 3 1 1-2 2-6-6 2-2z"/>',
 };
 const edIc = n => `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ED_ICONES[n]}</svg>`;
@@ -666,15 +670,27 @@ async function abrirEditor(inicio = 0) {
         <div class="ed-grupo-b"><button class="ib" id="e-un" title="Desfazer (Ctrl+Z)">${edIc('desfazer')}</button><button class="ib" id="e-re" title="Refazer (Ctrl+Shift+Z)">${edIc('refazer')}</button></div>
         <div class="ed-grupo-b"><button class="ib" id="e-zm" title="Diminuir zoom (−)">${edIc('menos')}</button><button class="ib txt" id="e-zt" title="Alternar entre tela inteira e 100% (duplo clique na foto)">Tela inteira</button><button class="ib" id="e-zp" title="Aumentar zoom (+)">${edIc('mais')}</button></div>
         <button class="ib rot" id="e-antes" title="Ver a foto sem os ajustes (tecla \\)">${edIc('comparar')}<span>Antes / Depois</span></button>
+        <button class="ib rot" id="e-cortar" title="Cortar e endireitar (R)">${edIc('cortar')}<span>Cortar</span></button>
       </div>
       <div class="ed-dir"><span class="ed-estado" id="e-estado"></span><button class="ib" id="e-atalhos" title="Atalhos do teclado">${edIc('teclado')}</button>
         <button class="ed-concluir" id="e-fim">${edIc('ok')}<span>Concluir</span></button></div></div>
-    <div class="ed-corpo"><div class="ed-foto stage" id="e-stage"><img id="e-img" alt="" draggable="false"><div class="ed-aviso hidden" id="e-selo"></div><div class="ed-antes hidden" id="e-tag">Antes</div></div>
+    <div class="ed-corpo"><div class="ed-foto stage" id="e-stage"><img id="e-img" alt="" draggable="false"><div class="ed-aviso hidden" id="e-selo"></div><div class="ed-antes hidden" id="e-tag">Antes</div>
+        <div class="ed-corte hidden" id="e-corte"><div class="ed-cbox" id="e-cbox"><i class="t1"></i><i class="t2"></i><i class="t3"></i><i class="t4"></i>
+          ${['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].map(h => `<b class="h h-${h}" data-h="${h}"></b>`).join('')}</div></div>
+        </div>
       <aside class="ed-lado">
         <div class="ed-acoes"><button class="ac" id="e-copiar" title="Copiar os ajustes desta foto (Ctrl+C)">${edIc('copiar')}<span>Copiar</span></button>
           <button class="ac" id="e-colar" title="Colar nesta foto (Ctrl+V)">${edIc('colar')}<span>Colar</span></button>
           <button class="ac" id="e-varias" title="Colar em várias fotos (Ctrl+Shift+V)">${edIc('varias')}<span>Colar em várias</span></button></div>
         <div class="ed-painel" id="e-painel"></div>
+        <div class="ed-cpainel hidden" id="e-cbar"><h3>${edIc('cortar')} Cortar e endireitar</h3>
+          <label>Proporção</label><div class="ed-clinha"><select id="e-prop">${ED_PROPORCOES.map(([id, n]) => `<option value="${id}">${n}</option>`).join('')}</select>
+            <button class="ib borda" id="e-pgirar" title="Trocar entre horizontal e vertical">${edIc('girar')}</button></div>
+          <label>Endireitar <span id="e-angv">0,0°</span></label><input type="range" id="e-ang" min="-45" max="45" step="0.1" value="0" title="Duplo clique: volta para 0°">
+          <button class="ib borda larga" id="e-czerar" title="Volta para a foto inteira e reta">${edIc('zerar')}<span>Redefinir corte</span></button>
+          <p class="ed-dica">Arraste os cantos e as bordas; arraste o meio para mover. O corte é feito na resolução original da foto.</p>
+          <div class="ed-cbotoes"><button class="ib borda" id="e-ccancelar" title="Desfaz o que mudou no corte (Esc)">Cancelar</button>
+          <button class="ed-concluir" id="e-caplicar" title="Aplicar o corte (Enter)">${edIc('ok')}<span>Aplicar corte</span></button></div></div>
         <div class="ed-rodape"><button class="rd" id="e-zerar" title="Zera todos os ajustes desta foto">${edIc('zerar')}<span>Redefinir</span></button>
           <button class="rd" id="e-rest" title="Desfaz tudo e volta a foto original guardada">${edIc('original')}<span>Restaurar original</span></button></div>
       </aside></div>
@@ -685,10 +701,11 @@ async function abrirEditor(inicio = 0) {
   const aviso = t => { selo.textContent = t; selo.classList.toggle('hidden', !t); };
   const fmt = (c, x) => c === 'wb.temp' ? String(Math.round(x)) : (x > 0 ? '+' : '') + x.toFixed(C[c].passo < 1 ? 2 : 0).replace('.', ',');
   const valor = c => c === 'wb.temp' ? aj.wb.temp : c === 'wb.tint' ? aj.wb.tint : aj.valores[c];
-  const ajTexto = (a = aj) => JSON.stringify({ valores: a.valores, wb: a.wb, curva: a.curva });
-  const zerados = () => ({ valores: Object.fromEntries(Object.keys(C).filter(c => !c.startsWith('wb.')).map(c => [c, C[c].padrao])), wb: { modo: 'asShot', ...cf }, curva: {} });
+  const ajTexto = (a = aj) => JSON.stringify({ valores: a.valores, wb: a.wb, curva: a.curva, corte: a.corte || null });
+  const zerados = () => ({ valores: Object.fromEntries(Object.keys(C).filter(c => !c.startsWith('wb.')).map(c => [c, C[c].padrao])), wb: { modo: 'asShot', ...cf }, curva: {}, corte: null });
   // ajustes de uma predefinicao/copia: o que nao veio fica no padrao; "Como fotografado" usa os numeros desta foto
-  const completar = a => { const z = zerados(); return { valores: { ...z.valores, ...(a.valores || {}) }, wb: a.wb && a.wb.modo !== 'asShot' ? { ...a.wb } : z.wb, curva: JSON.parse(JSON.stringify(a.curva || {})) }; };
+  // predefinicao: o corte da foto fica como esta (enquadramento e de cada foto)
+  const completar = a => { const z = zerados(); return { valores: { ...z.valores, ...(a.valores || {}) }, wb: a.wb && a.wb.modo !== 'asShot' ? { ...a.wb } : z.wb, curva: JSON.parse(JSON.stringify(a.curva || {})), corte: aj ? aj.corte : null }; };
 
   // --- desfazer / refazer (por foto, enquanto o editor estiver aberto) ---
   const hist = () => { if (!historico.has(i)) historico.set(i, { pilha: [ajTexto()], pos: 0 }); return historico.get(i); };
@@ -821,17 +838,123 @@ async function abrirEditor(inicio = 0) {
   stage.addEventListener('click', async e => {
     if (!conta) return;
     const r = img.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
-    const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+    let x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+    if (aj.corte) { const [x0, y0, x1, y1] = aj.corte.rect; x = x0 + x * (x1 - x0); y = y0 + y * (y1 - y0); }
     contaGotas(false);
     try { const b = await api(`/api/editor/${i}/balanco`, { body: { x, y, ajustes: aj } }); aj.wb = { modo: 'custom', temp: b.temp, tint: b.tint }; mudou(); }
     catch (er) { toast(er.message, true); }
   });
 
+
+  // --- corte e endireitar (o LightCraft confere o corte e corta na resolucao original) ---
+  let cortando = null, arrCorte = null, tAng = null;
+  const caixa = $('#e-cbox'), camada = $('#e-corte');
+  const proporcao = () => {                                // largura/altura no sistema normalizado (0..1) da foto
+    const p = ED_PROPORCOES.find(x => x[0] === cortando.proporcao); if (!p || p[2] === null) return null;
+    const A = (img.naturalWidth || 3) / (img.naturalHeight || 2), px = p[2] === 0 ? A : p[2];
+    return (cortando.girada ? 1 / px : px) / A;
+  };
+  function posCorte() {
+    if (!cortando) return;
+    Object.assign(camada.style, { left: img.style.left, top: img.style.top, width: img.style.width, height: img.style.height });
+    const [m0, m1, m2, m3] = cortando.max, [x0, y0, x1, y1] = cortando.rect;
+    Object.assign(caixa.style, { left: (x0 - m0) / (m2 - m0) * 100 + '%', top: (y0 - m1) / (m3 - m1) * 100 + '%',
+      width: (x1 - x0) / (m2 - m0) * 100 + '%', height: (y1 - y0) / (m3 - m1) * 100 + '%' });
+    $('#e-angv').textContent = cortando.angulo.toFixed(1).replace('.', ',') + '°';
+  }
+  img.addEventListener('load', () => setTimeout(posCorte, 0));
+  addEventListener('resize', () => setTimeout(posCorte, 50));
+  // maior retangulo da proporcao escolhida, centrado no corte atual, dentro da area valida
+  function encaixar() {
+    const r = proporcao(); if (!r) return;
+    const [m0, m1, m2, m3] = cortando.max, [x0, y0, x1, y1] = cortando.rect;
+    let w = Math.min(m2 - m0, (m3 - m1) * r), h = w / r;
+    const cx = Math.min(m2 - w / 2, Math.max(m0 + w / 2, (x0 + x1) / 2)), cy = Math.min(m3 - h / 2, Math.max(m1 + h / 2, (y0 + y1) / 2));
+    cortando.rect = [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2]; posCorte();
+  }
+  async function validar(novaPrevia) {
+    if (!cortando) return;
+    try {
+      const d = await api(`/api/editor/${i}/corte`, { body: { rect: cortando.rect, angulo: cortando.angulo } });
+      if (!cortando) return;
+      const mudouMax = JSON.stringify(d.maximo) !== JSON.stringify(cortando.max);
+      // o corte fica dentro da area mostrada (com a foto girada o LightCraft aceitaria um pouco alem dela)
+      const [m0, m1, m2, m3] = d.maximo, [x0, y0, x1, y1] = d.rect;
+      cortando.max = d.maximo; cortando.rect = [Math.max(x0, m0), Math.max(y0, m1), Math.min(x1, m2), Math.min(y1, m3)];
+      if (proporcao()) encaixar(); posCorte();
+      if (mudouMax || novaPrevia) agendar();
+    } catch (e) { toast(e.message, true); }
+  }
+  async function entrarCorte() {
+    if (!aj || cortando) return;
+    if (antes) alternarAntes(); contaGotas(false); zoom.ajustar();
+    const c = aj.corte || { rect: [0, 0, 1, 1], angulo: 0, proporcao: 'livre' };
+    cortando = { rect: [...c.rect], angulo: c.angulo || 0, proporcao: c.proporcao || 'livre', girada: false, max: [0, 0, 1, 1], antes: aj.corte };
+    $('#e-prop').value = cortando.proporcao; $('#e-ang').value = cortando.angulo;
+    $('#e-cortar').classList.add('ativo'); stage.classList.add('cortando'); el.classList.add('modo-corte'); camada.classList.remove('hidden'); $('#e-cbar').classList.remove('hidden');
+    await validar(true);
+  }
+  function sairCorte(aplicar) {
+    if (!cortando) return;
+    const c = cortando; cortando = null;
+    camada.classList.add('hidden'); $('#e-cbar').classList.add('hidden'); $('#e-cortar').classList.remove('ativo'); stage.classList.remove('cortando'); el.classList.remove('modo-corte');
+    if (aplicar) {
+      const inteiro = Math.abs(c.angulo) < 0.01 && c.rect.every((v, k) => Math.abs(v - [0, 0, 1, 1][k]) < 1e-4);
+      aj.corte = inteiro ? null : { rect: c.rect.map(v => Math.round(v * 1e5) / 1e5), angulo: Math.round(c.angulo * 100) / 100, proporcao: c.proporcao };
+      mudou();
+    } else agendar();
+  }
+  camada.addEventListener('wheel', e => { e.preventDefault(); e.stopPropagation(); }, { passive: false });   // sem zoom enquanto corta
+  // a barra do corte fica sobre a foto: o clique e dela (sem isso o zoom captura o ponteiro e o botao nao recebe o clique)
+  ['pointerdown', 'dblclick', 'wheel'].forEach(t => $('#e-cbar').addEventListener(t, e => e.stopPropagation()));
+  camada.addEventListener('dblclick', e => e.stopPropagation());
+  camada.addEventListener('pointerdown', e => {
+    if (!cortando) return; e.stopPropagation(); e.preventDefault();
+    const h = e.target.dataset.h || (e.target.closest('#e-cbox') ? 'mover' : null); if (!h) return;
+    camada.setPointerCapture(e.pointerId);
+    arrCorte = { h, x: e.clientX, y: e.clientY, rect: [...cortando.rect], b: camada.getBoundingClientRect() };
+  });
+  camada.addEventListener('pointermove', e => {
+    if (!arrCorte) return;
+    const a = arrCorte, [m0, m1, m2, m3] = cortando.max, min = 0.03;
+    const dx = (e.clientX - a.x) / a.b.width * (m2 - m0), dy = (e.clientY - a.y) / a.b.height * (m3 - m1);
+    let [x0, y0, x1, y1] = a.rect; const r = proporcao();
+    if (a.h === 'mover') {
+      const w = x1 - x0, hh = y1 - y0; x0 = Math.min(m2 - w, Math.max(m0, x0 + dx)); y0 = Math.min(m3 - hh, Math.max(m1, y0 + dy)); x1 = x0 + w; y1 = y0 + hh;
+    } else if (r && a.h.length === 2) {                   // canto com proporcao: o canto oposto fica parado
+      const dir = a.h.includes('e') ? 1 : -1, ver = a.h.includes('s') ? 1 : -1;
+      const ax = dir > 0 ? x0 : x1, ay = ver > 0 ? y0 : y1;
+      let w = Math.max(Math.abs((dir > 0 ? x1 : x0) + dx - ax), Math.abs((ver > 0 ? y1 : y0) + dy - ay) * r, min);
+      w = Math.min(w, (dir > 0 ? m2 - ax : ax - m0), (ver > 0 ? m3 - ay : ay - m1) * r);
+      const hh = w / r;
+      [x0, x1] = dir > 0 ? [ax, ax + w] : [ax - w, ax]; [y0, y1] = ver > 0 ? [ay, ay + hh] : [ay - hh, ay];
+    } else {
+      if (a.h.includes('w')) x0 = Math.min(x1 - min, Math.max(m0, x0 + dx));
+      if (a.h.includes('e')) x1 = Math.max(x0 + min, Math.min(m2, x1 + dx));
+      if (a.h.includes('n')) y0 = Math.min(y1 - min, Math.max(m1, y0 + dy));
+      if (a.h.includes('s')) y1 = Math.max(y0 + min, Math.min(m3, y1 + dy));
+      if (r) {                                          // borda com proporcao: ajusta o outro lado em volta do centro
+        if (a.h === 'e' || a.h === 'w') { let hh = (x1 - x0) / r, c = (y0 + y1) / 2; hh = Math.min(hh, m3 - m1); const cy = Math.min(m3 - hh / 2, Math.max(m1 + hh / 2, c)); [y0, y1] = [cy - hh / 2, cy + hh / 2]; if ((x1 - x0) / r > hh + 1e-9) { a.h === 'e' ? x1 = x0 + hh * r : x0 = x1 - hh * r; } }
+        else { let w = (y1 - y0) * r, c = (x0 + x1) / 2; w = Math.min(w, m2 - m0); const cx = Math.min(m2 - w / 2, Math.max(m0 + w / 2, c)); [x0, x1] = [cx - w / 2, cx + w / 2]; if ((y1 - y0) * r > w + 1e-9) { a.h === 's' ? y1 = y0 + w / r : y0 = y1 - w / r; } }
+      }
+    }
+    cortando.rect = [x0, y0, x1, y1]; posCorte();
+  });
+  camada.addEventListener('pointerup', () => { if (arrCorte) { arrCorte = null; if (Math.abs(cortando.angulo) > 0.01) validar(); } });
+  $('#e-cortar').onclick = () => cortando ? sairCorte(true) : entrarCorte();
+  $('#e-caplicar').onclick = () => sairCorte(true);
+  $('#e-ccancelar').onclick = () => sairCorte(false);
+  $('#e-czerar').onclick = () => { if (!cortando) return; cortando.angulo = 0; cortando.rect = [0, 0, 1, 1]; cortando.proporcao = 'livre'; $('#e-prop').value = 'livre'; $('#e-ang').value = 0; validar(true); };
+  $('#e-prop').onchange = e => { cortando.proporcao = e.target.value; cortando.girada = false; encaixar(); };
+  $('#e-pgirar').onclick = () => { if (!cortando || !proporcao()) return; cortando.girada = !cortando.girada; encaixar(); };
+  $('#e-ang').oninput = e => { if (!cortando) return; cortando.angulo = +e.target.value; posCorte(); clearTimeout(tAng); tAng = setTimeout(() => validar(true), 180); };
+  $('#e-ang').ondblclick = () => { if (!cortando) return; cortando.angulo = 0; $('#e-ang').value = 0; validar(true); };
+
   // --- previa ao vivo (uma por vez; a ultima mudanca sempre e mostrada). Com zoom, a versao em tamanho cheio vem em seguida ---
   function agendar() { if (emVoo) { deNovo = true; return; } pedir(); }
   async function pedir() {
     emVoo = true; deNovo = false;
-    const alvo = i, texto = antes ? '{}' : ajTexto(), lado = Math.min(2048, Math.round(Math.max(stage.clientWidth, stage.clientHeight) * (window.devicePixelRatio || 1)));
+    const alvo = i, texto = antes ? '{}' : cortando ? ajTexto({ ...aj, corte: { rect: cortando.max, angulo: cortando.angulo } }) : ajTexto(), lado = Math.min(2048, Math.round(Math.max(stage.clientWidth, stage.clientHeight) * (window.devicePixelRatio || 1)));
     const t = setTimeout(() => aviso('Revelando…'), 600);
     try {
       const r = await fetch(`/api/editor/${i}/previa?lado=${lado}&aj=${encodeURIComponent(texto)}`);
@@ -867,6 +990,7 @@ async function abrirEditor(inicio = 0) {
     Object.keys(C).filter(c => !c.startsWith('wb.') && grupos.includes(edGrupo(c))).forEach(c => { n.valores[c] = copia.valores[c] !== undefined ? copia.valores[c] : C[c].padrao; });
     if (grupos.includes('cor')) n.wb = copia.wb.modo === 'asShot' ? { modo: 'asShot', ...cf } : { ...copia.wb };
     if (grupos.includes('curva')) n.curva = JSON.parse(JSON.stringify(copia.curva || {}));
+    if (grupos.includes('corte')) n.corte = copia.corte ? JSON.parse(JSON.stringify(copia.corte)) : null;
     return n;
   }
   function colar() {
@@ -931,17 +1055,17 @@ async function abrirEditor(inicio = 0) {
     try {
       const d = await api(`/api/editor/${i}`); cf = d.como_fotografado;
       const a = d.ajustes;
-      aj = { valores: { ...a.valores }, wb: a.wb.modo === 'asShot' ? { modo: 'asShot', ...cf } : { ...a.wb }, curva: a.curva || {} };
+      aj = { valores: { ...a.valores }, wb: a.wb.modo === 'asShot' ? { modo: 'asShot', ...cf } : { ...a.wb }, curva: a.curva || {}, corte: a.corte || null };
       if (aj.wb.modo !== 'asShot' && aj.wb.modo !== 'custom' && aj.wb.temp === undefined) { try { const r = await api(`/api/editor/${i}/balanco`, { body: { modo: aj.wb.modo, ajustes: aj } }); aj.wb = { modo: aj.wb.modo, temp: r.temp, tint: r.tint }; } catch (e) { } }
       Object.keys(C).forEach(c => { if (!c.startsWith('wb.') && aj.valores[c] === undefined) aj.valores[c] = C[c].padrao; });
       salvo = ajTexto(); $('#e-rest').disabled = !d.editada; hist(); botoesHist(); mostraValores(); agendar();
     } catch (e) { aviso(e.message); }
   }
-  function ir(k) { if (k < 0 || k >= fotos.length || k === i) return; salvarSeMudou(); i = k; antes = false; $('#e-tag').classList.add('hidden'); $('#e-antes').classList.remove('ativo'); contaGotas(false); carregar(); }
-  function alternarAntes() { antes = !antes; $('#e-tag').classList.toggle('hidden', !antes); $('#e-antes').classList.toggle('ativo', antes); agendar(); }
+  function ir(k) { if (k < 0 || k >= fotos.length || k === i) return; sairCorte(true); salvarSeMudou(); i = k; antes = false; $('#e-tag').classList.add('hidden'); $('#e-antes').classList.remove('ativo'); contaGotas(false); carregar(); }
+  function alternarAntes() { if (cortando) return; antes = !antes; $('#e-tag').classList.toggle('hidden', !antes); $('#e-antes').classList.toggle('ativo', antes); agendar(); }
   const vigia = setInterval(async () => { if (fotos.some(f => f.estado === 'salvando')) await atualizaLista(); }, 1500);
   async function concluir() {
-    salvarSeMudou(); clearInterval(vigia);
+    sairCorte(true); salvarSeMudou(); clearInterval(vigia);
     let n = await atualizaLista();
     while (n > 0) { aviso(`Salvando ${n} foto(s) editada(s)…`); await new Promise(r => setTimeout(r, 800)); n = await atualizaLista(); }
     const erros = fotos.filter(f => f.estado.startsWith('erro'));
@@ -953,6 +1077,8 @@ async function abrirEditor(inicio = 0) {
     if (document.querySelector('.modal-bg') || !document.body.contains(el)) return;
     const emControle = ['INPUT', 'SELECT'].includes(document.activeElement.tagName) && document.activeElement.type !== 'range';
     const ctrl = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
+    if (cortando && e.key === 'Escape') { sairCorte(false); return; }
+    if (cortando && e.key === 'Enter') { e.preventDefault(); sairCorte(true); return; }
     if (e.key === 'Escape') { if (conta) contaGotas(false); else if (marcando) { marcando = null; barraMarcar(); tira(); } else concluir(); return; }
     if (emControle) return;
     if (ctrl && k === 'z') { e.preventDefault(); passo(e.shiftKey ? 1 : -1); }
@@ -963,6 +1089,7 @@ async function abrirEditor(inicio = 0) {
     else if (document.activeElement.type === 'range' && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;   // setas ajustam a regua com foco
     else if (e.key === 'ArrowRight') ir(i + 1); else if (e.key === 'ArrowLeft') ir(i - 1);
     else if (e.key === '\\') alternarAntes(); else if (k === 'w') contaGotas(!conta);
+    else if (k === 'r') cortando ? sairCorte(true) : entrarCorte();
     else if (e.key === '+' || e.key === '=') zoom.mais(); else if (e.key === '-' || e.key === '_') zoom.menos();
     else if (e.key === '0') zoom.ajustar(); else if (e.key === '1') zoom.cem();
   }
@@ -972,7 +1099,7 @@ async function abrirEditor(inicio = 0) {
   $('#e-zm').onclick = zoom.menos; $('#e-zp').onclick = zoom.mais; $('#e-zt').onclick = zoom.alternar;
   $('#e-atalhos').onclick = () => modal(`<h2>⌨ Atalhos do editor</h2><table class="ed-atalhos">${[
     ['← →', 'Foto anterior / próxima'], ['Roda do mouse, + −', 'Zoom'], ['1 ou duplo clique', '100% (pixel real)'], ['0', 'Tela inteira'],
-    ['\\', 'Antes / Depois'], ['W', 'Conta-gotas do equilíbrio de branco'], ['Ctrl+Z / Ctrl+Shift+Z', 'Desfazer / Refazer'],
+    ['\\', 'Antes / Depois'], ['R', 'Cortar e endireitar (Enter aplica, Esc cancela)'], ['W', 'Conta-gotas do equilíbrio de branco'], ['Ctrl+Z / Ctrl+Shift+Z', 'Desfazer / Refazer'],
     ['Ctrl+C', 'Copiar ajustes'], ['Ctrl+V', 'Colar nesta foto'], ['Ctrl+Shift+V', 'Colar em várias fotos'],
     ['Duplo clique na régua', 'Volta a régua ao padrão'], ['Esc', 'Concluir a edição']].map(([t, d]) => `<tr><td><kbd>${esc(t)}</kbd></td><td>${esc(d)}</td></tr>`).join('')}</table>`, [{ t: 'Fechar', v: true }]);
   $('#e-copiar').onclick = copiar; $('#e-colar').onclick = colar; $('#e-varias').onclick = colarEmVarias;

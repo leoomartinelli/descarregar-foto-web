@@ -533,6 +533,12 @@ def editor_excluir_predefinicao(nome: str):
     return {"predefinicoes": editor.excluir_predefinicao(nome)}
 
 
+@app.post("/api/editor/{i}/corte")
+def editor_corte(i: int, d: dict = Body(...)):
+    """Confere um corte no LightCraft: {rect, angulo} -> {maximo, rect ajustado, angulo}."""
+    return _motor(editor.corte_valido, _foto(i), d.get("rect"), d.get("angulo"))
+
+
 @app.post("/api/editor/{i}/salvar")
 def editor_salvar(i: int, d: dict = Body(...)):
     editor.salvar(_foto(i), d.get("ajustes"))

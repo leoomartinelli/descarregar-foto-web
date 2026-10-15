@@ -271,3 +271,47 @@ def test_zoom_do_editor_revela_em_tamanho_cheio():
     descarregar(1)
     r = local.get("/api/editor/0/previa", params={"aj": '{"valores": {"light.exposure": 0.5}}', "lado": 0})
     assert r.status_code == 200 and Image.open(io.BytesIO(r.content)).size == (1800, 1200)
+
+
+# ---------- corte e endireitar ----------
+
+def test_corte_validado():
+    assert editor.limpar({"corte": {"rect": [0, 0, 1, 1], "angulo": 0}})["corte"] is None        # inteira e reta
+    assert editor.e_padrao({"corte": {"rect": [0, 0, 1, 1]}})
+    c = editor.limpar({"corte": {"rect": [0.1, -3, 0.9, 0.8], "angulo": 99, "proporcao": "4x5"}})["corte"]
+    assert c == {"rect": [0.1, 0.0, 0.9, 0.8], "angulo": 45.0, "proporcao": "4x5"}
+    assert editor.limpar({"corte": {"rect": [0.8, 0, 0.2, 1]}})["corte"] is None                 # invertido
+    assert editor.para_lightcraft({"corte": {"rect": [0.1, 0.2, 0.9, 0.8], "angulo": 3}})["crop"] == {
+        "geometry": {"angle": 3.0, "rect": {"x0": 0.1, "y0": 0.2, "x1": 0.9, "y1": 0.8}}}
+
+
+def test_colar_leva_o_corte_so_se_marcado():
+    base = {"corte": {"rect": [0.1, 0.1, 0.9, 0.9], "angulo": 0}}
+    copia = {"valores": {"light.exposure": 1}, "corte": {"rect": [0, 0, 0.5, 0.5], "angulo": 2}}
+    assert editor.mesclar(base, copia, ["luz"])["corte"]["rect"] == [0.1, 0.1, 0.9, 0.9]
+    assert editor.mesclar(base, copia, ["luz", "corte"])["corte"]["rect"] == [0.0, 0.0, 0.5, 0.5]
+    assert editor.mesclar(base, copia, None)["corte"]["rect"] == [0.1, 0.1, 0.9, 0.9]        # padrao: sem corte
+
+
+@motor
+def test_corte_sai_na_resolucao_original():
+    fotos = descarregar(1)                                   # 1800 x 1200
+    original = np.asarray(Image.open(fotos[0]).convert("RGB"), float)
+    editada = editor.salvar_agora(fotos[0], {"corte": {"rect": [0.5, 0.0, 1.0, 0.5], "angulo": 0}})
+    img = Image.open(editada)
+    assert img.size == (900, 600)                            # pedaco exato da foto, sem reduzir
+    # e o conteudo e o canto de cima a direita da foto original
+    assert abs(np.asarray(img.convert("RGB"), float).mean((0, 1)) - original[:600, 900:].mean((0, 1))).max() < 6
+    # previa do corte tambem vem cortada
+    r = local.get("/api/editor/0/previa", params={"aj": json.dumps({"corte": {"rect": [0, 0, 0.5, 1], "angulo": 0}}), "lado": 600})
+    assert Image.open(io.BytesIO(r.content)).size == (450, 600)        # 900 x 1200 reduzida para 600 no lado maior
+
+
+@motor
+def test_endireitar_nao_deixa_canto_vazio():
+    descarregar(1)
+    d = local.post("/api/editor/0/corte", json={"rect": [0, 0, 1, 1], "angulo": 10}).json()
+    x0, y0, x1, y1 = d["maximo"]
+    assert 0.05 < x0 < 0.2 and 0.8 < x1 < 0.95 and d["rect"] == d["maximo"] and d["angulo"] == 10
+    fora = local.post("/api/editor/0/corte", json={"rect": [-0.3, 0.1, 0.6, 0.9], "angulo": 0}).json()
+    assert fora["rect"][0] == 0.0 and fora["maximo"] == [0.0, 0.0, 1.0, 1.0]

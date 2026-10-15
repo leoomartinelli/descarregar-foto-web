@@ -8,6 +8,20 @@ Todas as mudanças de cada versão ficam aqui. O número segue o [Versionamento 
 - **CORREÇÃO** — numerada sozinha: cada mudança no programa que chega na `main` publica a seguinte, com as notas
   tiradas dos commits. Só MAIOR e MENOR precisam de seção aqui (veja "Subir para 1.1.0 ou 2.0.0" no README).
 
+## [1.3.0] - 2026-10-15
+
+### Novo no editor de fotos
+- **Cortar e endireitar** (botão "Cortar" ou tecla R): retângulo com alças nos cantos e bordas, grade dos terços,
+  proporções Livre, Original, 1:1, 4:5, 2:3, 3:4, 16:9 e 9:16 (com botão para trocar horizontal/vertical) e
+  Endireitar de −45° a +45°. Enter aplica, Esc cancela; os controles ficam no painel lateral enquanto corta.
+- O corte é feito pelo LightCraft **na resolução original** da foto (a área escolhida não é reduzida) e o
+  LightCraft confere que, endireitando, não sobra canto vazio. Entra no desfazer/refazer e pode ser restaurado.
+- Copiar/colar ganhou o grupo "Corte e endireitar" (desmarcado por padrão: cada foto tem o seu enquadramento).
+
+### Melhorado
+- Barra do editor reorganizada (v1.2.1): navegação, ferramentas em grupos com ícones, indicador Salvo/Alterado e
+  Concluir em destaque; copiar/colar e redefinir junto do painel de ajustes; atalhos em uma janela própria.
+
 ## [1.2.0] - 2026-10-15
 
 ### Novo no editor de fotos
