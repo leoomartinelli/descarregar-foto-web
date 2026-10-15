@@ -65,7 +65,7 @@ def obter_estatisticas_locais():
             if not os.path.isdir(fdir):
                 continue
             total, no_drive, cams, lentes = 0, 0, set(), set()
-            for root, _, files in os.walk(fdir):
+            for root, _, files in core.andar(fdir):
                 for nome in files:
                     if nome.lower().endswith(core.EXT_TODAS):
                         total += 1

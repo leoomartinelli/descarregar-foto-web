@@ -8,6 +8,22 @@ Todas as mudanças de cada versão ficam aqui. O número segue o [Versionamento 
 - **CORREÇÃO** — numerada sozinha: cada mudança no programa que chega na `main` publica a seguinte, com as notas
   tiradas dos commits. Só MAIOR e MENOR precisam de seção aqui (veja "Subir para 1.1.0 ou 2.0.0" no README).
 
+## [1.1.0] - 2026-10-14
+
+### Novo
+- **Editor de fotos** (botão "🎨 Editar Fotos" na etapa final, depois de selecionar): foto por foto, no modelo do
+  LightCraft e com o mesmo motor dele.
+  - **Luz:** Exposição, Contraste, Realces, Sombras, Brancos e Pretos.
+  - **Curva de tons:** Realces, Claros, Escuros e Sombras.
+  - **Cor:** Equilíbrio de branco (Como fotografado, Automático, Luz do dia, Nublado, Sombra, Tungstênio,
+    Fluorescente, Flash ou Personalizado), conta-gotas, Temperatura, Matiz, Vibratilidade e Saturação.
+  - Prévia ao vivo revelada pelo LightCraft (o que aparece é o que vai para o Drive), Antes/Depois, Redefinir e
+    duplo clique para voltar uma régua ao padrão.
+  - Ao trocar de foto ou concluir, a foto editada é salva em tamanho cheio em segundo plano (RAW vira JPEG); a
+    original fica guardada na pasta oculta `.originais` e pode ser restaurada. O envio ao Drive espera os
+    salvamentos e leva as fotos editadas.
+- **Zoom na seleção de fotos** (v1.0.1): roda do mouse/pinça, arrastar, duplo clique para 100% e foto original.
+
 ## [1.0.0] - 2026-10-14
 
 Primeira versão com instaladores para Windows, macOS e Linux.

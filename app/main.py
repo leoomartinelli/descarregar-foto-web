@@ -9,7 +9,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import atualizador, core, drive, lan, painel, review, stats, transfer, versao
+from . import atualizador, core, drive, editor, lan, painel, raw, review, stats, transfer, versao
 from .core import E
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -90,6 +90,7 @@ def estado():
         "precisa_reiniciar": precisa_reiniciar(),
         "versao": versao.VERSAO, "empacotado": versao.EMPACOTADO,
         "atualizacao": atualizador.ESTADO,
+        "editor_disponivel": raw.disponivel(),
     }
 
 
@@ -438,6 +439,7 @@ def revisor_finalizar(d: dict = Body(...)):
     for i in idx:
         try:
             if os.path.exists(lista[i]):
+                editor.apagar(lista[i])          # foto editada: apaga tambem a original guardada
                 os.remove(lista[i])
                 apagadas += 1
         except Exception as e:
@@ -458,10 +460,71 @@ def revisor_abrir_pasta(d: dict = Body(default={})):
     return {"ok": True}
 
 
+# ======================= editor de fotos (motor do LightCraft) =======================
+
+def _foto(i):
+    if not 0 <= i < len(E.arquivos_transferidos):
+        erro("Foto inexistente.", 404)
+    return E.arquivos_transferidos[i]
+
+
+def _motor(fn, *args, **kw):
+    try:
+        return fn(*args, **kw)
+    except RuntimeError as e:
+        erro(str(e), 500)
+
+
+@app.get("/api/editor")
+def editor_fotos():
+    return {"fotos": editor.situacao(), "pendentes": editor.pendentes(), "disponivel": raw.disponivel(),
+            "controles": {c: {"secao": v[0], "rotulo": v[1], "min": v[2], "max": v[3], "padrao": v[4], "passo": v[5]}
+                          for c, v in editor.CONTROLES.items()},
+            "modos_wb": editor.MODOS_WB}
+
+
+@app.get("/api/editor/{i}")
+def editor_foto(i: int):
+    foto = _foto(i)
+    return {"nome": os.path.basename(foto), "ajustes": editor.ajustes_de(foto),
+            "como_fotografado": _motor(editor.como_fotografado, foto), "editada": editor.registro(foto) is not None}
+
+
+@app.get("/api/editor/{i}/previa")
+def editor_previa(i: int, aj: str = "{}", lado: int = 1400):
+    import json
+    try:
+        ajustes = json.loads(aj)
+    except ValueError:
+        erro("Ajustes inválidos.")
+    return Response(_motor(editor.previa, _foto(i), ajustes, lado), media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/editor/{i}/balanco")
+def editor_balanco(i: int, d: dict = Body(...)):
+    """Balanco de branco: {modo} (Como fotografado, Automatico, Luz do dia...) ou {x, y} do conta-gotas."""
+    return _motor(editor.balanco, _foto(i), modo=d.get("modo"), x=d.get("x"), y=d.get("y"), aj=d.get("ajustes"))
+
+
+@app.post("/api/editor/{i}/salvar")
+def editor_salvar(i: int, d: dict = Body(...)):
+    editor.salvar(_foto(i), d.get("ajustes"))
+    return {"ok": True}
+
+
+@app.post("/api/editor/{i}/restaurar")
+def editor_restaurar(i: int):
+    _motor(editor.restaurar, _foto(i))
+    return {"ok": True}
+
+
 # ======================= upload para o Drive =======================
 
 @app.post("/api/upload/iniciar")
 def upload_iniciar(d: dict = Body(default={})):
+    if editor.pendentes():
+        erro(f"Aguarde: ainda salvando {editor.pendentes()} foto(s) editada(s). Tente de novo em instantes.")
     try:
         r = drive.iniciar_upload(d.get("link", ""), E.sessao_fotografo or "")
     except RuntimeError as e:

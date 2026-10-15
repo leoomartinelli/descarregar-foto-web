@@ -355,6 +355,7 @@ async function vDescarregar() {
     <progress id="pg" value="${tr.progresso || 0}" max="1"></progress><div id="pg-t" class="mut" style="margin-top:6px">${esc(tr.msg || '')}</div>`;
   else corpo = `<h2 class="ok">✅ Passo ${nP(5)} · Descarregamento concluído!</h2><p class="mut">${esc(tr.msg || '')}${st.transferidas ? ` · ${st.transferidas} foto(s) disponíveis para revisão` : ''}</p>
     <button class="grande" id="b-sel" ${st.transferidas ? '' : 'disabled'}>🖼️ Selecionar Fotos (apagar as ruins)</button>
+    ${st.editor_disponivel ? `<button class="grande roxo" id="b-edit" style="margin-top:8px" ${st.transferidas ? '' : 'disabled'}>🎨 Editar Fotos (luz e cor)</button>` : ''}
     <div class="row" style="margin-top:8px"><button class="cinza" id="b-abrir">📁 Abrir Pasta</button><button class="cinza" id="b-novo">🔄 Novo Descarregamento</button></div>
     <h3>☁️ Enviar para o Google Drive (opcional)</h3><select id="s-drive">${optsDrive.map(o => `<option ${S.sel.drive === o.r ? 'selected' : ''}>${esc(o.r)}</option>`).join('')}</select>
     <button class="lar" id="b-up" style="margin-top:8px;width:100%" ${st.transferidas ? '' : 'disabled'}>⬆ Enviar fotos para o Drive</button>
@@ -475,6 +476,7 @@ async function vDescarregar() {
   // ---- passo 5 ----
   if (W.step === 5) {
     q('#b-sel').onclick = abrirRevisor;
+    if (q('#b-edit')) q('#b-edit').onclick = () => abrirEditor();
     q('#b-abrir').onclick = () => api('/api/revisor/abrir-pasta', { body: {} }).catch(e => toast(e.message, true));
     q('#b-novo').onclick = async () => { await api('/api/transferencia/nova', { body: {} }); S.sel.nome = ''; S.sel.outro = ''; S.sel.driveManual = false; W.step = 1; W.pastas = []; S.oChave = null; await carregar(); vDescarregar(); };
     q('#s-drive').onchange = e => { S.sel.drive = e.target.value; S.sel.driveManual = true; };
@@ -594,6 +596,160 @@ function criarZoom(stage, img, aoMudar) {
     precisaOriginal: () => Z.z > 1.01,
     destruir: () => removeEventListener('resize', redimensiona),
   };
+}
+
+// ---------- EDITOR DE FOTOS (Luz, Curva e Cor; motor do LightCraft, como no app LightCraft) ----------
+// A previa e revelada pelo proprio LightCraft (o que aparece e o que vai para o Drive). Ao trocar de foto ou concluir,
+// a foto editada e salva em tamanho cheio em segundo plano; a original fica guardada (botao "Restaurar original").
+const ED_SECOES = [['luz', 'Luz'], ['curva', 'Curva de tons'], ['cor', 'Cor']];
+const ED_TRILHO = { 'wb.temp': 'trk-temp', 'wb.tint': 'trk-tint', 'color.vibrance': 'trk-vib', 'color.saturation': 'trk-sat' };
+const T_MIN = Math.log(2000), T_MAX = Math.log(50000);           // temperatura em escala logaritmica (mais facil de ajustar)
+const tPos = t => Math.round((Math.log(t) - T_MIN) / (T_MAX - T_MIN) * 1000), tVal = p => Math.round(Math.exp(T_MIN + p / 1000 * (T_MAX - T_MIN)) / 50) * 50;
+async function abrirEditor(inicio = 0) {
+  let info; try { info = await api('/api/editor'); } catch (e) { return toast(e.message, true); }
+  if (!info.disponivel) return alerta('Editor indisponível', 'O motor de edição (LightCraft) não está instalado neste computador.');
+  if (!info.fotos.length) return alerta('Aviso', 'Não há fotos para editar.');
+  pararPoll();
+  const C = info.controles, v = Date.now(), fechadas = new Set(['curva']);
+  let fotos = info.fotos, i = Math.min(inicio, fotos.length - 1), aj = null, salvo = '', cf = { temp: 6500, tint: 0 };
+  let antes = false, conta = false, emVoo = false, deNovo = false, urlBlob = null, versaoMini = {};
+  const el = document.createElement('div'); el.className = 'rev ed';
+  el.innerHTML = `<div class="bar"><button class="cinza" id="e-ant">◀ Anterior</button><div class="info" id="e-info"></div><button class="cinza" id="e-prox">Próxima ▶</button>
+    <button class="cinza" id="e-antes" title="Ver a foto sem os ajustes (tecla \\)">Antes / Depois</button><button class="cinza" id="e-zerar" title="Zera todos os ajustes desta foto">Redefinir</button>
+    <button class="cinza" id="e-rest" title="Volta a foto original guardada">Restaurar original</button><button class="verde" id="e-fim">✅ Concluir</button></div>
+    <div class="ed-corpo"><div class="ed-foto" id="e-stage"><img id="e-img" alt="" draggable="false"><div class="zselo hidden" id="e-selo"></div><div class="ed-antes hidden" id="e-tag">Antes</div></div>
+    <div class="ed-painel" id="e-painel"></div></div>
+    <div class="strip" id="e-strip"></div><div class="kbd">← → trocar de foto · \\ antes/depois · W conta-gotas · duplo clique numa régua: volta ao padrão · Esc concluir</div>`;
+  document.body.appendChild(el);
+  const $ = s => el.querySelector(s), img = $('#e-img'), stage = $('#e-stage'), selo = $('#e-selo');
+  const aviso = t => { selo.textContent = t; selo.classList.toggle('hidden', !t); };
+  const fmt = (c, x) => c === 'wb.temp' ? String(Math.round(x)) : (x > 0 ? '+' : '') + x.toFixed(C[c].passo < 1 ? 2 : 0).replace('.', ',');
+  const valor = c => c === 'wb.temp' ? aj.wb.temp : c === 'wb.tint' ? aj.wb.tint : aj.valores[c];
+
+  // --- painel ---
+  function painel() {
+    $('#e-painel').innerHTML = ED_SECOES.map(([s, nome]) => `<button class="ed-sec" data-s="${s}">${fechadas.has(s) ? '▸' : '▾'} ${nome}</button>
+      <div class="ed-grupo ${fechadas.has(s) ? 'hidden' : ''}">${s === 'cor' ? `<div class="ed-wb"><span>Equilíbrio de branco</span><select id="e-wb">${Object.entries(info.modos_wb).map(([m, r]) => `<option value="${m}">${esc(r)}</option>`).join('')}</select><button class="cinza" id="e-pick" title="Conta-gotas: clique num ponto que deveria ser cinza/branco (W)">🎯</button></div>` : ''}
+      ${Object.keys(C).filter(c => C[c].secao === s).map(c => `<div class="ed-ctl" data-c="${c}" title="Duplo clique: volta ao padrão"><div class="ed-lin"><span>${esc(C[c].rotulo)}</span><span class="ed-val"></span></div>
+        <input type="range" class="${ED_TRILHO[c] || 'trk-centro'}" ${c === 'wb.temp' ? 'min="0" max="1000" step="1"' : `min="${C[c].min}" max="${C[c].max}" step="${C[c].passo}"`}></div>`).join('')}</div>`).join('');
+    $('#e-painel').querySelectorAll('.ed-sec').forEach(b => b.onclick = () => { const s = b.dataset.s; fechadas.has(s) ? fechadas.delete(s) : fechadas.add(s); painel(); mostraValores(); });
+    $('#e-painel').querySelectorAll('.ed-ctl').forEach(d => {
+      const c = d.dataset.c, r = d.querySelector('input');
+      r.oninput = () => {
+        if (!aj) return;
+        const x = c === 'wb.temp' ? tVal(+r.value) : +r.value;
+        if (c === 'wb.temp' || c === 'wb.tint') { aj.wb[c === 'wb.temp' ? 'temp' : 'tint'] = x; aj.wb.modo = 'custom'; } else aj.valores[c] = x;
+        mostraValores(); agendar();
+      };
+      d.ondblclick = () => {                                   // como no Lightroom: duplo clique zera
+        if (!aj) return;
+        if (c === 'wb.temp' || c === 'wb.tint') aj.wb = { modo: 'asShot', ...cf }; else aj.valores[c] = C[c].padrao;
+        mostraValores(); agendar();
+      };
+    });
+    $('#e-wb').onchange = async e => {
+      const modo = e.target.value;
+      if (modo === 'asShot') aj.wb = { modo, ...cf };
+      else if (modo !== 'custom') { try { const r = await api(`/api/editor/${i}/balanco`, { body: { modo, ajustes: aj } }); aj.wb = { modo, temp: r.temp, tint: r.tint }; } catch (er) { toast(er.message, true); } }
+      else aj.wb.modo = 'custom';
+      mostraValores(); agendar();
+    };
+    $('#e-pick').onclick = () => contaGotas(!conta);
+  }
+  function mostraValores() {
+    $('#e-painel').querySelectorAll('.ed-ctl').forEach(d => {
+      const c = d.dataset.c, x = valor(c), r = d.querySelector('input');
+      r.value = c === 'wb.temp' ? tPos(x) : x; d.querySelector('.ed-val').textContent = fmt(c, x);
+      d.classList.toggle('mudou', c.startsWith('wb.') ? aj.wb.modo !== 'asShot' : x !== C[c].padrao);
+    });
+    const s = $('#e-wb'); if (s) s.value = aj.wb.modo;
+    const p = $('#e-pick'); if (p) p.classList.toggle('ativo', conta);
+  }
+  function contaGotas(ligar) { conta = ligar; stage.classList.toggle('pick', conta); aviso(conta ? 'Clique num ponto que deveria ser branco ou cinza' : ''); mostraValores(); }
+  img.onclick = async e => {
+    if (!conta) return;
+    const r = img.getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+    contaGotas(false);
+    try { const b = await api(`/api/editor/${i}/balanco`, { body: { x, y, ajustes: aj } }); aj.wb = { modo: 'custom', temp: b.temp, tint: b.tint }; mostraValores(); agendar(); }
+    catch (er) { toast(er.message, true); }
+  };
+
+  // --- previa ao vivo (uma por vez; a ultima mudanca sempre e mostrada) ---
+  const ajTexto = () => JSON.stringify({ valores: aj.valores, wb: aj.wb });
+  function agendar() { if (emVoo) { deNovo = true; return; } pedir(); }
+  async function pedir() {
+    emVoo = true; deNovo = false;
+    const alvo = i, lado = Math.min(2048, Math.round(Math.max(stage.clientWidth, stage.clientHeight) * (window.devicePixelRatio || 1)));
+    const t = setTimeout(() => aviso('Revelando…'), 600);
+    try {
+      const r = await fetch(`/api/editor/${i}/previa?lado=${lado}&aj=${encodeURIComponent(antes ? '{}' : ajTexto())}`);
+      if (!r.ok) throw new Error(((await r.json().catch(() => ({}))).detail) || 'Erro ' + r.status);
+      const b = await r.blob();
+      if (alvo === i) { const u = URL.createObjectURL(b); img.src = u; if (urlBlob) URL.revokeObjectURL(urlBlob); urlBlob = u; }
+      clearTimeout(t); if (!conta) aviso('');
+    } catch (e) { clearTimeout(t); aviso('Não foi possível revelar: ' + e.message); }
+    emVoo = false; if (deNovo) pedir();
+  }
+
+  // --- fotos ---
+  function tira() {
+    $('#e-strip').innerHTML = fotos.map((f, k) => `<span class="tb ${k === i ? 'cur' : ''}" data-k="${k}"><img src="/api/revisor/imagem/${k}?lado=160&v=${v}${versaoMini[k] ? '&m=' + versaoMini[k] : ''}" loading="lazy" title="${esc(f.nome)}">
+      ${f.estado === 'salvando' ? '<b class="bd">salvando…</b>' : f.estado.startsWith('erro') ? '<b class="bd err" title="' + esc(f.estado) + '">erro</b>' : f.editada ? '<b class="bd">✎</b>' : ''}</span>`).join('');
+    $('#e-strip').querySelectorAll('.tb').forEach(t => t.onclick = () => ir(+t.dataset.k));
+    const cur = $('#e-strip .tb.cur'); if (cur) cur.scrollIntoView({ block: 'nearest', inline: 'center' });
+  }
+  async function atualizaLista() {
+    try {
+      const d = await api('/api/editor'), antesL = fotos;
+      d.fotos.forEach((f, k) => { if (antesL[k] && antesL[k].estado === 'salvando' && f.estado !== 'salvando') versaoMini[k] = Date.now(); });
+      fotos = d.fotos; tira(); return d.pendentes;
+    } catch (e) { return 0; }
+  }
+  function salvarSeMudou() {
+    const atual = ajTexto(); if (atual === salvo) return;
+    salvo = atual; fotos[i].estado = 'salvando';
+    api(`/api/editor/${i}/salvar`, { body: { ajustes: aj } }).catch(e => toast('Não foi possível salvar: ' + e.message, true));
+  }
+  async function carregar() {
+    $('#e-info').innerHTML = `<b>Foto ${i + 1}/${fotos.length}</b> · ${esc(fotos[i].nome)}`;
+    img.src = `/api/revisor/imagem/${i}?v=${v}${versaoMini[i] ? '&m=' + versaoMini[i] : ''}`;   // aparece na hora; a previa do LightCraft vem em seguida
+    tira();
+    try {
+      const d = await api(`/api/editor/${i}`); cf = d.como_fotografado;
+      aj = { valores: { ...d.ajustes.valores }, wb: d.ajustes.wb.modo === 'custom' ? d.ajustes.wb : { modo: d.ajustes.wb.modo, ...cf } };
+      if (aj.wb.modo !== 'asShot' && aj.wb.modo !== 'custom') { try { const r = await api(`/api/editor/${i}/balanco`, { body: { modo: aj.wb.modo, ajustes: aj } }); aj.wb = { modo: aj.wb.modo, temp: r.temp, tint: r.tint }; } catch (e) { } }
+      Object.keys(C).forEach(c => { if (!c.startsWith('wb.') && aj.valores[c] === undefined) aj.valores[c] = C[c].padrao; });
+      salvo = ajTexto(); $('#e-rest').disabled = !d.editada; mostraValores(); agendar();
+    } catch (e) { aviso(e.message); }
+  }
+  function ir(k) { if (k < 0 || k >= fotos.length || k === i) return; salvarSeMudou(); i = k; antes = false; $('#e-tag').classList.add('hidden'); contaGotas(false); carregar(); }
+  function alternarAntes() { antes = !antes; $('#e-tag').classList.toggle('hidden', !antes); agendar(); }
+  const vigia = setInterval(async () => { if (fotos.some(f => f.estado === 'salvando')) await atualizaLista(); }, 1500);
+  async function concluir() {
+    salvarSeMudou(); clearInterval(vigia);
+    let n = await atualizaLista();
+    while (n > 0) { aviso(`Salvando ${n} foto(s) editada(s)…`); await new Promise(r => setTimeout(r, 800)); n = await atualizaLista(); }
+    const erros = fotos.filter(f => f.estado.startsWith('erro'));
+    document.removeEventListener('keydown', tecla); if (urlBlob) URL.revokeObjectURL(urlBlob); el.remove();
+    if (erros.length) await alerta('Atenção', `${erros.length} foto(s) não puderam ser salvas e ficaram como estavam:\n${erros.map(f => f.nome).join(', ')}`);
+    render();
+  }
+  function tecla(e) {
+    if (document.querySelector('.modal-bg') || !document.body.contains(el)) return;
+    const emControle = ['INPUT', 'SELECT'].includes(document.activeElement.tagName);
+    if (e.key === 'Escape') { if (conta) contaGotas(false); else concluir(); }
+    else if (!emControle && e.key === 'ArrowRight') ir(i + 1); else if (!emControle && e.key === 'ArrowLeft') ir(i - 1);
+    else if (e.key === '\\') alternarAntes(); else if (e.key.toLowerCase() === 'w' && !emControle) contaGotas(!conta);
+  }
+  document.addEventListener('keydown', tecla);
+  $('#e-ant').onclick = () => ir(i - 1); $('#e-prox').onclick = () => ir(i + 1); $('#e-antes').onclick = alternarAntes; $('#e-fim').onclick = concluir;
+  $('#e-zerar').onclick = () => { aj = { valores: Object.fromEntries(Object.keys(C).filter(c => !c.startsWith('wb.')).map(c => [c, C[c].padrao])), wb: { modo: 'asShot', ...cf } }; mostraValores(); agendar(); };
+  $('#e-rest').onclick = async () => {
+    if (!await confirmar('Restaurar original', `Desfazer todas as edições de "${fotos[i].nome}" e voltar à foto original?`, 'Restaurar', 'Cancelar')) return;
+    try { await api(`/api/editor/${i}/restaurar`, { body: {} }); versaoMini[i] = Date.now(); await atualizaLista(); carregar(); } catch (e) { toast(e.message, true); }
+  };
+  addEventListener('resize', () => { if (document.body.contains(el)) agendar(); });
+  painel(); carregar();
 }
 
 // ---------- REVISOR (selecao de fotos) ----------

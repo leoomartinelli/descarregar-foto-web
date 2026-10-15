@@ -5,8 +5,8 @@
 As correcoes (1.0.1, 1.0.2...) sao automaticas: cada push na main que muda o programa publica a seguinte. Este
 script e para quando voce quer marcar um passo maior (recurso novo = MENOR; mudanca que obriga todos os PCs a
 atualizarem juntos = MAIOR). Confere: formato X.Y.0, maior que a ultima versao publicada, arvore do git limpa, main
-atualizada com o GitHub e secao "## [1.1.0]" no CHANGELOG.md. Grava o VERSION e faz o commit; depois e so
-`git push`: o GitHub Actions compila, publica e os PCs se atualizam."""
+sem estar atras do GitHub e secao "## [1.1.0]" no CHANGELOG.md. Grava o VERSION e faz o commit; depois e so
+`git push` (o recurso novo e a versao juntos): o GitHub Actions compila, publica e os PCs se atualizam."""
 import os
 import re
 import subprocess
@@ -44,8 +44,9 @@ def main():
         parar("há alterações sem commit. Faça o commit (ou descarte) antes de lançar a versão.")
     if git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip() != "main":
         parar("lance versões a partir da branch main.")
-    if git("rev-parse", "HEAD").stdout != git("rev-parse", "origin/main").stdout:
-        parar("a main local está diferente da do GitHub. Faça git pull / git push antes.")
+    # pode ter commits ainda nao enviados (o recurso novo vai junto com a versao); so nao pode estar atras do GitHub
+    if git("merge-base", "--is-ancestor", "origin/main", "HEAD").returncode != 0:
+        parar("a main do GitHub tem commits que você não tem. Faça git pull antes.")
     changelog = open(os.path.join(RAIZ, "CHANGELOG.md"), encoding="utf-8").read()
     if f"## [{nova}]" not in changelog:
         parar(f"escreva no CHANGELOG.md a seção '## [{nova}] - AAAA-MM-DD' com o que mudou, faça o commit "

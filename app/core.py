@@ -218,14 +218,30 @@ def marcar_enviados(raiz, caminhos, pasta_drive=None):
             json.dump(todos, f)
 
 
+def desmarcar_enviado(raiz, caminho):
+    """A foto mudou (foi editada): sai do registro de enviadas para poder ir de novo ao Drive."""
+    with _lock_enviados:
+        todos = _ler_enviados(raiz)
+        if todos.pop(_chave_arquivo(raiz, caminho), "ausente") != "ausente":
+            with open(os.path.join(raiz, ARQ_ENVIADOS), "w", encoding="utf-8") as f:
+                json.dump(todos, f)
+
+
 ARQ_NUMERACAO = ".numeracao.json"
+
+
+def andar(pasta):
+    """os.walk sem as pastas ocultas (ex.: .originais do editor, com as fotos antes da edicao)."""
+    for raiz, pastas, arquivos in os.walk(pasta):
+        pastas[:] = [p for p in pastas if not p.startswith(".")]
+        yield raiz, pastas, arquivos
 
 
 def maior_numero(pasta, fotografo):
     """Maior N entre os arquivos '<fotografo>_N...' dentro da pasta (recursivo); 0 se nao houver."""
     prefixo = f"{fotografo}_"
     maior = 0
-    for _, _, files in os.walk(pasta):
+    for _, _, files in andar(pasta):
         for f in files:
             if f.startswith(prefixo):
                 parte = os.path.splitext(f[len(prefixo):])[0].split('_')[0]
@@ -382,7 +398,7 @@ def ativar_servir(servir):
 def tem_midia(pasta):
     if not os.path.isdir(pasta):
         return False
-    for _, _, files in os.walk(pasta):
+    for _, _, files in andar(pasta):
         for f in files:
             if f.lower().endswith(EXT_TODAS):
                 return True

@@ -59,6 +59,8 @@ jobs:
           python-version: ${{ env.PYTHON }}
           cache: pip
       - run: pip install -r requirements.txt pytest httpx
+      # motor do LightCraft: os testes do editor revelam fotos de verdade
+      - run: python packaging/baixar_lightcraft.py
       - run: python -m pytest tests -q
 
   compilar:
