@@ -8,6 +8,23 @@ Todas as mudanças de cada versão ficam aqui. O número segue o [Versionamento 
 - **CORREÇÃO** — numerada sozinha: cada mudança no programa que chega na `main` publica a seguinte, com as notas
   tiradas dos commits. Só MAIOR e MENOR precisam de seção aqui (veja "Subir para 1.1.0 ou 2.0.0" no README).
 
+## [1.2.0] - 2026-10-15
+
+### Novo no editor de fotos
+- **Copiar e colar ajustes** (📋 Copiar / Ctrl+C e 📥 Colar / Ctrl+V), escolhendo o que copiar: Luz, Curva de tons
+  e/ou Cor. **Colar em várias…** (Ctrl+Shift+V): marque as fotos na tira e todas recebem os ajustes, salvando em
+  segundo plano.
+- **Predefinições com nome** (ex.: "Louvor palco"): salve os ajustes de uma foto e aplique em qualquer foto, em
+  qualquer Servir.
+- **Zoom** igual ao da seleção (roda do mouse/pinça, arrastar, duplo clique ou 1 = 100%, 0 = tela inteira). Com
+  zoom a prévia é revelada da foto original em tamanho cheio, com os ajustes.
+- **Curva de pontos** desenhável (RGB, Vermelho, Verde, Azul), com as curvas prontas do LightCraft (Linear,
+  Contraste médio, Contraste forte); a curva paramétrica continua embaixo.
+- **Desfazer / Refazer** (↶ ↷, Ctrl+Z / Ctrl+Shift+Z) por foto.
+
+### Corrigido
+- Vários avisos seguidos se sobrepunham no rodapé; agora ficam empilhados.
+
 ## [1.1.0] - 2026-10-14
 
 ### Novo

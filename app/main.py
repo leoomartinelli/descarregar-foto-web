@@ -507,6 +507,32 @@ def editor_balanco(i: int, d: dict = Body(...)):
     return _motor(editor.balanco, _foto(i), modo=d.get("modo"), x=d.get("x"), y=d.get("y"), aj=d.get("ajustes"))
 
 
+@app.post("/api/editor/aplicar")
+def editor_aplicar(d: dict = Body(...)):
+    """Cola ajustes copiados em varias fotos: {indices, ajustes, grupos: [luz, curva, cor]}."""
+    fotos = [_foto(int(i)) for i in d.get("indices", [])]
+    editor.aplicar_em(fotos, d.get("ajustes"), d.get("grupos"))
+    return {"ok": True, "fotos": len(fotos)}
+
+
+@app.get("/api/editor-predefinicoes")
+def editor_predefinicoes():
+    return {"predefinicoes": editor.predefinicoes(), "curvas": editor.curvas_prontas(), "grupos": editor.GRUPOS}
+
+
+@app.post("/api/editor-predefinicoes")
+def editor_salvar_predefinicao(d: dict = Body(...)):
+    try:
+        return {"predefinicoes": editor.salvar_predefinicao(d.get("nome"), d.get("ajustes"))}
+    except ValueError as e:
+        erro(str(e))
+
+
+@app.delete("/api/editor-predefinicoes")
+def editor_excluir_predefinicao(nome: str):
+    return {"predefinicoes": editor.excluir_predefinicao(nome)}
+
+
 @app.post("/api/editor/{i}/salvar")
 def editor_salvar(i: int, d: dict = Body(...)):
     editor.salvar(_foto(i), d.get("ajustes"))

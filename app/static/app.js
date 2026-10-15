@@ -13,9 +13,12 @@ async function api(url, opts = {}) {
   if (!r.ok) throw new Error((d && (d.detail || d.erro)) || ('Erro ' + r.status));
   return d;
 }
+// avisos rapidos: empilhados no rodape (varios seguidos nao se sobrepoem)
 function toast(msg, err) {
+  let pilha = document.getElementById('toasts');
+  if (!pilha) { pilha = document.createElement('div'); pilha.id = 'toasts'; document.body.appendChild(pilha); }
   const t = document.createElement('div'); t.className = 'toast' + (err ? ' err' : ''); t.textContent = msg;
-  document.body.appendChild(t); setTimeout(() => t.remove(), err ? 6000 : 3500);
+  pilha.appendChild(t); setTimeout(() => t.remove(), err ? 6000 : 3500);
 }
 function modal(html, botoes, larga) {
   return new Promise(res => {
@@ -601,38 +604,88 @@ function criarZoom(stage, img, aoMudar) {
 // ---------- EDITOR DE FOTOS (Luz, Curva e Cor; motor do LightCraft, como no app LightCraft) ----------
 // A previa e revelada pelo proprio LightCraft (o que aparece e o que vai para o Drive). Ao trocar de foto ou concluir,
 // a foto editada e salva em tamanho cheio em segundo plano; a original fica guardada (botao "Restaurar original").
+// Tem zoom (com zoom a previa vem da original em tamanho cheio), curva de pontos, copiar/colar ajustes (inclusive em
+// varias fotos), predefinicoes com nome e desfazer/refazer.
 const ED_SECOES = [['luz', 'Luz'], ['curva', 'Curva de tons'], ['cor', 'Cor']];
 const ED_TRILHO = { 'wb.temp': 'trk-temp', 'wb.tint': 'trk-tint', 'color.vibrance': 'trk-vib', 'color.saturation': 'trk-sat' };
+const ED_CANAIS = [['master', 'RGB', '#e8e8e8'], ['red', 'Vermelho', '#ff5a5a'], ['green', 'Verde', '#5ad06a'], ['blue', 'Azul', '#5a8cff']];
 const T_MIN = Math.log(2000), T_MAX = Math.log(50000);           // temperatura em escala logaritmica (mais facil de ajustar)
 const tPos = t => Math.round((Math.log(t) - T_MIN) / (T_MAX - T_MIN) * 1000), tVal = p => Math.round(Math.exp(T_MIN + p / 1000 * (T_MAX - T_MIN)) / 50) * 50;
+const edGrupo = c => c.startsWith('wb.') || c.startsWith('color.') ? 'cor' : c.startsWith('curve.') ? 'curva' : 'luz';
+const edCopia = { ajustes: null, grupos: ['luz', 'curva', 'cor'] };   // area de transferencia (vale enquanto a pagina estiver aberta)
+
+// curva suave que passa pelos pontos (monotona, como as curvas de tons dos editores de foto)
+function curvaSuave(pts) {
+  const n = pts.length, xs = pts.map(p => p[0]), ys = pts.map(p => p[1]), d = [], m = [];
+  for (let k = 0; k < n - 1; k++) d.push((ys[k + 1] - ys[k]) / ((xs[k + 1] - xs[k]) || 1e-6));
+  m[0] = d[0]; m[n - 1] = d[n - 2];
+  for (let k = 1; k < n - 1; k++) m[k] = d[k - 1] * d[k] <= 0 ? 0 : (d[k - 1] + d[k]) / 2;
+  for (let k = 0; k < n - 1; k++) {
+    if (!d[k]) { m[k] = m[k + 1] = 0; continue; }
+    const a = m[k] / d[k], b = m[k + 1] / d[k], h = a * a + b * b;
+    if (h > 9) { const t = 3 / Math.sqrt(h); m[k] = t * a * d[k]; m[k + 1] = t * b * d[k]; }
+  }
+  return x => {
+    if (x <= xs[0]) return ys[0]; if (x >= xs[n - 1]) return ys[n - 1];
+    let k = 0; while (x > xs[k + 1]) k++;
+    const h = xs[k + 1] - xs[k], t = (x - xs[k]) / h, t2 = t * t, t3 = t2 * t;
+    return (2 * t3 - 3 * t2 + 1) * ys[k] + (t3 - 2 * t2 + t) * h * m[k] + (-2 * t3 + 3 * t2) * ys[k + 1] + (t3 - t2) * h * m[k + 1];
+  };
+}
+
 async function abrirEditor(inicio = 0) {
-  let info; try { info = await api('/api/editor'); } catch (e) { return toast(e.message, true); }
+  let info, pre; try { [info, pre] = await Promise.all([api('/api/editor'), api('/api/editor-predefinicoes')]); } catch (e) { return toast(e.message, true); }
   if (!info.disponivel) return alerta('Editor indisponível', 'O motor de edição (LightCraft) não está instalado neste computador.');
   if (!info.fotos.length) return alerta('Aviso', 'Não há fotos para editar.');
   pararPoll();
-  const C = info.controles, v = Date.now(), fechadas = new Set(['curva']);
-  let fotos = info.fotos, i = Math.min(inicio, fotos.length - 1), aj = null, salvo = '', cf = { temp: 6500, tint: 0 };
-  let antes = false, conta = false, emVoo = false, deNovo = false, urlBlob = null, versaoMini = {};
+  const C = info.controles, v = Date.now(), fechadas = new Set(), historico = new Map();
+  let fotos = info.fotos, i = Math.min(inicio, fotos.length - 1), aj = null, salvo = '', cf = { temp: 6500, tint: 0 }, canal = 'master';
+  let antes = false, conta = false, emVoo = false, deNovo = false, urlBlob = null, versaoMini = {}, marcando = null;
   const el = document.createElement('div'); el.className = 'rev ed';
-  el.innerHTML = `<div class="bar"><button class="cinza" id="e-ant">◀ Anterior</button><div class="info" id="e-info"></div><button class="cinza" id="e-prox">Próxima ▶</button>
-    <button class="cinza" id="e-antes" title="Ver a foto sem os ajustes (tecla \\)">Antes / Depois</button><button class="cinza" id="e-zerar" title="Zera todos os ajustes desta foto">Redefinir</button>
+  el.innerHTML = `<div class="bar"><button class="cinza" id="e-ant">◀</button><div class="info" id="e-info"></div><button class="cinza" id="e-prox">▶</button>
+    <span class="zgrupo"><button class="cinza" id="e-un" title="Desfazer (Ctrl+Z)">↶</button><button class="cinza" id="e-re" title="Refazer (Ctrl+Shift+Z)">↷</button></span>
+    <span class="zgrupo"><button class="cinza" id="e-zm" title="Diminuir zoom (−)">−</button><button class="cinza" id="e-zt" title="Alternar entre tela inteira e 100% (duplo clique na foto)">Tela inteira</button><button class="cinza" id="e-zp" title="Aumentar zoom (+)">+</button></span>
+    <span class="zgrupo"><button class="cinza" id="e-copiar" title="Copiar ajustes (Ctrl+C)">📋 Copiar</button><button class="cinza" id="e-colar" title="Colar nesta foto (Ctrl+V)">📥 Colar</button><button class="cinza" id="e-varias" title="Colar em várias fotos (Ctrl+Shift+V)">Colar em várias…</button></span>
+    <button class="cinza" id="e-antes" title="Ver a foto sem os ajustes (tecla \\)">Antes/Depois</button><button class="cinza" id="e-zerar" title="Zera todos os ajustes desta foto">Redefinir</button>
     <button class="cinza" id="e-rest" title="Volta a foto original guardada">Restaurar original</button><button class="verde" id="e-fim">✅ Concluir</button></div>
-    <div class="ed-corpo"><div class="ed-foto" id="e-stage"><img id="e-img" alt="" draggable="false"><div class="zselo hidden" id="e-selo"></div><div class="ed-antes hidden" id="e-tag">Antes</div></div>
+    <div class="ed-corpo"><div class="ed-foto stage" id="e-stage"><img id="e-img" alt="" draggable="false"><div class="ed-aviso hidden" id="e-selo"></div><div class="ed-antes hidden" id="e-tag">Antes</div></div>
     <div class="ed-painel" id="e-painel"></div></div>
-    <div class="strip" id="e-strip"></div><div class="kbd">← → trocar de foto · \\ antes/depois · W conta-gotas · duplo clique numa régua: volta ao padrão · Esc concluir</div>`;
+    <div class="ed-marcar hidden" id="e-marcar"></div><div class="strip" id="e-strip"></div>
+    <div class="kbd">← → trocar de foto · roda do mouse: zoom · \\ antes/depois · W conta-gotas · Ctrl+Z desfazer · Ctrl+C/Ctrl+V copiar/colar · duplo clique numa régua: padrão · Esc concluir</div>`;
   document.body.appendChild(el);
   const $ = s => el.querySelector(s), img = $('#e-img'), stage = $('#e-stage'), selo = $('#e-selo');
+  const zoom = criarZoom(stage, img, t => { $('#e-zt').textContent = t; });
   const aviso = t => { selo.textContent = t; selo.classList.toggle('hidden', !t); };
   const fmt = (c, x) => c === 'wb.temp' ? String(Math.round(x)) : (x > 0 ? '+' : '') + x.toFixed(C[c].passo < 1 ? 2 : 0).replace('.', ',');
   const valor = c => c === 'wb.temp' ? aj.wb.temp : c === 'wb.tint' ? aj.wb.tint : aj.valores[c];
+  const ajTexto = (a = aj) => JSON.stringify({ valores: a.valores, wb: a.wb, curva: a.curva });
+  const zerados = () => ({ valores: Object.fromEntries(Object.keys(C).filter(c => !c.startsWith('wb.')).map(c => [c, C[c].padrao])), wb: { modo: 'asShot', ...cf }, curva: {} });
+  // ajustes de uma predefinicao/copia: o que nao veio fica no padrao; "Como fotografado" usa os numeros desta foto
+  const completar = a => { const z = zerados(); return { valores: { ...z.valores, ...(a.valores || {}) }, wb: a.wb && a.wb.modo !== 'asShot' ? { ...a.wb } : z.wb, curva: JSON.parse(JSON.stringify(a.curva || {})) }; };
+
+  // --- desfazer / refazer (por foto, enquanto o editor estiver aberto) ---
+  const hist = () => { if (!historico.has(i)) historico.set(i, { pilha: [ajTexto()], pos: 0 }); return historico.get(i); };
+  function registrar() {
+    const h = hist(), t = ajTexto(); if (h.pilha[h.pos] === t) return;
+    h.pilha = h.pilha.slice(0, h.pos + 1); h.pilha.push(t); if (h.pilha.length > 200) h.pilha.shift(); h.pos = h.pilha.length - 1; botoesHist();
+  }
+  function passo(d) { const h = hist(), p = h.pos + d; if (p < 0 || p >= h.pilha.length) return; h.pos = p; aj = JSON.parse(h.pilha[p]); mostraValores(); agendar(); botoesHist(); }
+  function botoesHist() { const h = hist(); $('#e-un').disabled = h.pos <= 0; $('#e-re').disabled = h.pos >= h.pilha.length - 1; }
+  const mudou = () => { mostraValores(); agendar(); registrar(); };
 
   // --- painel ---
   function painel() {
-    $('#e-painel').innerHTML = ED_SECOES.map(([s, nome]) => `<button class="ed-sec" data-s="${s}">${fechadas.has(s) ? '▸' : '▾'} ${nome}</button>
-      <div class="ed-grupo ${fechadas.has(s) ? 'hidden' : ''}">${s === 'cor' ? `<div class="ed-wb"><span>Equilíbrio de branco</span><select id="e-wb">${Object.entries(info.modos_wb).map(([m, r]) => `<option value="${m}">${esc(r)}</option>`).join('')}</select><button class="cinza" id="e-pick" title="Conta-gotas: clique num ponto que deveria ser cinza/branco (W)">🎯</button></div>` : ''}
+    const preds = pre.predefinicoes;
+    $('#e-painel').innerHTML = `<div class="ed-pre"><span>Predefinições</span><select id="e-pre"><option value="">${preds.length ? '— aplicar uma predefinição —' : '(nenhuma salva ainda)'}</option>${preds.map((p, k) => `<option value="${k}">${esc(p.nome)}</option>`).join('')}</select>
+      <button class="cinza" id="e-pre-salvar" title="Salvar os ajustes desta foto com um nome">＋ Salvar</button><button class="cinza" id="e-pre-excluir" title="Excluir a predefinição escolhida">🗑</button></div>` +
+      ED_SECOES.map(([s, nome]) => `<button class="ed-sec" data-s="${s}">${fechadas.has(s) ? '▸' : '▾'} ${nome}</button>
+      <div class="ed-grupo ${fechadas.has(s) ? 'hidden' : ''}">${s === 'curva' ? `<div class="ed-curva"><div class="ed-curva-top"><select id="e-canal">${ED_CANAIS.map(([c, n]) => `<option value="${c}" ${c === canal ? 'selected' : ''}>${n}</option>`).join('')}</select>
+        <select id="e-cpronta"><option value="">Curva pronta…</option>${pre.curvas.map((c, k) => `<option value="${k}">${esc(c.nome)}</option>`).join('')}</select></div>
+        <canvas id="e-cv"></canvas><div class="ed-dica">Clique para criar um ponto · arraste · duplo clique no ponto remove</div><div class="ed-sub">Paramétrica</div></div>` : ''}
+      ${s === 'cor' ? `<div class="ed-wb"><span>Equilíbrio de branco</span><select id="e-wb">${Object.entries(info.modos_wb).map(([m, r]) => `<option value="${m}">${esc(r)}</option>`).join('')}</select><button class="cinza" id="e-pick" title="Conta-gotas: clique num ponto que deveria ser cinza/branco (W)">🎯</button></div>` : ''}
       ${Object.keys(C).filter(c => C[c].secao === s).map(c => `<div class="ed-ctl" data-c="${c}" title="Duplo clique: volta ao padrão"><div class="ed-lin"><span>${esc(C[c].rotulo)}</span><span class="ed-val"></span></div>
         <input type="range" class="${ED_TRILHO[c] || 'trk-centro'}" ${c === 'wb.temp' ? 'min="0" max="1000" step="1"' : `min="${C[c].min}" max="${C[c].max}" step="${C[c].passo}"`}></div>`).join('')}</div>`).join('');
-    $('#e-painel').querySelectorAll('.ed-sec').forEach(b => b.onclick = () => { const s = b.dataset.s; fechadas.has(s) ? fechadas.delete(s) : fechadas.add(s); painel(); mostraValores(); });
+    $('#e-painel').querySelectorAll('.ed-sec').forEach(b => b.onclick = () => { const s = b.dataset.s; fechadas.has(s) ? fechadas.delete(s) : fechadas.add(s); painel(); if (aj) mostraValores(); });
     $('#e-painel').querySelectorAll('.ed-ctl').forEach(d => {
       const c = d.dataset.c, r = d.querySelector('input');
       r.oninput = () => {
@@ -641,10 +694,11 @@ async function abrirEditor(inicio = 0) {
         if (c === 'wb.temp' || c === 'wb.tint') { aj.wb[c === 'wb.temp' ? 'temp' : 'tint'] = x; aj.wb.modo = 'custom'; } else aj.valores[c] = x;
         mostraValores(); agendar();
       };
+      r.onchange = registrar;                                   // um passo do "desfazer" por movimento da regua
       d.ondblclick = () => {                                   // como no Lightroom: duplo clique zera
         if (!aj) return;
         if (c === 'wb.temp' || c === 'wb.tint') aj.wb = { modo: 'asShot', ...cf }; else aj.valores[c] = C[c].padrao;
-        mostraValores(); agendar();
+        mudou();
       };
     });
     $('#e-wb').onchange = async e => {
@@ -652,9 +706,27 @@ async function abrirEditor(inicio = 0) {
       if (modo === 'asShot') aj.wb = { modo, ...cf };
       else if (modo !== 'custom') { try { const r = await api(`/api/editor/${i}/balanco`, { body: { modo, ajustes: aj } }); aj.wb = { modo, temp: r.temp, tint: r.tint }; } catch (er) { toast(er.message, true); } }
       else aj.wb.modo = 'custom';
-      mostraValores(); agendar();
+      mudou();
     };
     $('#e-pick').onclick = () => contaGotas(!conta);
+    $('#e-pre').onchange = e => { const p = pre.predefinicoes[+e.target.value]; e.target.value = ''; if (!p || !aj) return; aj = completar(p.ajustes); mudou(); toast(`Predefinição "${p.nome}" aplicada`); $('#e-pre-excluir').dataset.k = ''; };
+    $('#e-pre-salvar').onclick = async () => {
+      const nome = prompt('Nome da predefinição (ex.: Louvor palco):'); if (!nome || !aj) return;
+      try { pre.predefinicoes = (await api('/api/editor-predefinicoes', { body: { nome, ajustes: aj } })).predefinicoes; painel(); mostraValores(); toast(`Predefinição "${nome}" salva`); } catch (er) { toast(er.message, true); }
+    };
+    $('#e-pre-excluir').onclick = async () => {
+      if (!pre.predefinicoes.length) return;
+      const nomes = pre.predefinicoes.map((p, k) => `${k + 1}. ${p.nome}`).join('\n');
+      const k = +prompt(`Qual predefinição excluir? Digite o número:\n\n${nomes}`) - 1, p = pre.predefinicoes[k]; if (!p) return;
+      if (!await confirmar('Excluir predefinição', `Excluir a predefinição "${p.nome}"?`, 'Excluir', 'Cancelar')) return;
+      pre.predefinicoes = (await api('/api/editor-predefinicoes?nome=' + encodeURIComponent(p.nome), { method: 'DELETE' })).predefinicoes; painel(); mostraValores();
+    };
+    const cv = $('#e-cv');
+    if (cv) {
+      $('#e-canal').onchange = e => { canal = e.target.value; curva(); };
+      $('#e-cpronta').onchange = e => { const c = pre.curvas[+e.target.value]; e.target.value = ''; if (!c || !aj) return; aj.curva = JSON.parse(JSON.stringify(c.curva)); curva(); mudou(); };
+      editorCurva(cv);
+    }
   }
   function mostraValores() {
     $('#e-painel').querySelectorAll('.ed-ctl').forEach(d => {
@@ -664,38 +736,141 @@ async function abrirEditor(inicio = 0) {
     });
     const s = $('#e-wb'); if (s) s.value = aj.wb.modo;
     const p = $('#e-pick'); if (p) p.classList.toggle('ativo', conta);
+    curva();
   }
-  function contaGotas(ligar) { conta = ligar; stage.classList.toggle('pick', conta); aviso(conta ? 'Clique num ponto que deveria ser branco ou cinza' : ''); mostraValores(); }
-  img.onclick = async e => {
-    if (!conta) return;
-    const r = img.getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
-    contaGotas(false);
-    try { const b = await api(`/api/editor/${i}/balanco`, { body: { x, y, ajustes: aj } }); aj.wb = { modo: 'custom', temp: b.temp, tint: b.tint }; mostraValores(); agendar(); }
-    catch (er) { toast(er.message, true); }
-  };
 
-  // --- previa ao vivo (uma por vez; a ultima mudanca sempre e mostrada) ---
-  const ajTexto = () => JSON.stringify({ valores: aj.valores, wb: aj.wb });
+  // --- curva de pontos (canvas) ---
+  let cvDesenha = () => { };
+  function curva() { cvDesenha(); }
+  function editorCurva(cv) {
+    const ctx = cv.getContext('2d'); let arrasto = -1;
+    const pts = () => (aj && aj.curva[canal] && aj.curva[canal].length ? aj.curva[canal] : [[0, 0], [1, 1]]).map(p => [...p]);
+    const tam = () => { const w = cv.clientWidth, r = window.devicePixelRatio || 1; if (cv.width !== Math.round(w * r)) { cv.width = cv.height = Math.round(w * r); } return { w, r }; };
+    cvDesenha = () => {
+      if (!document.body.contains(cv)) return;
+      const { w, r } = tam(); ctx.setTransform(r, 0, 0, r, 0, 0); ctx.clearRect(0, 0, w, w);
+      ctx.fillStyle = '#161616'; ctx.fillRect(0, 0, w, w); ctx.strokeStyle = '#2e2e2e'; ctx.lineWidth = 1;
+      for (let k = 1; k < 4; k++) { ctx.beginPath(); ctx.moveTo(k * w / 4, 0); ctx.lineTo(k * w / 4, w); ctx.moveTo(0, k * w / 4); ctx.lineTo(w, k * w / 4); ctx.stroke(); }
+      ctx.strokeStyle = '#3a3a3a'; ctx.beginPath(); ctx.moveTo(0, w); ctx.lineTo(w, 0); ctx.stroke();
+      // outros canais com curva, mais apagados
+      ED_CANAIS.forEach(([c, , cor]) => {
+        const p = aj && aj.curva[c]; if (c === canal || !p || !p.length) return;
+        const f = curvaSuave(p); ctx.strokeStyle = cor + '55'; ctx.beginPath(); for (let k = 0; k <= 100; k++) ctx[k ? 'lineTo' : 'moveTo'](k / 100 * w, (1 - f(k / 100)) * w); ctx.stroke();
+      });
+      const p = pts(), f = curvaSuave(p), cor = ED_CANAIS.find(x => x[0] === canal)[2];
+      ctx.strokeStyle = cor; ctx.lineWidth = 2; ctx.beginPath(); for (let k = 0; k <= 200; k++) { const y = Math.min(1, Math.max(0, f(k / 200))); ctx[k ? 'lineTo' : 'moveTo'](k / 200 * w, (1 - y) * w); } ctx.stroke();
+      p.forEach(([x, y]) => { ctx.fillStyle = '#1e1e1e'; ctx.strokeStyle = cor; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x * w, (1 - y) * w, 5, 0, 7); ctx.fill(); ctx.stroke(); });
+    };
+    const local = e => { const b = cv.getBoundingClientRect(); return [Math.min(1, Math.max(0, (e.clientX - b.left) / b.width)), Math.min(1, Math.max(0, 1 - (e.clientY - b.top) / b.height))]; };
+    const perto = (p, [x, y]) => p.findIndex(q => Math.hypot((q[0] - x) * cv.clientWidth, (q[1] - y) * cv.clientWidth) < 10);
+    const grava = p => { aj.curva[canal] = (p.length === 2 && p[0][0] === 0 && p[0][1] === 0 && p[1][0] === 1 && p[1][1] === 1) ? [] : p; cvDesenha(); agendar(); };
+    cv.onpointerdown = e => {
+      if (!aj) return; cv.setPointerCapture(e.pointerId);
+      const p = pts(), q = local(e); arrasto = perto(p, q);
+      if (arrasto < 0 && p.length < 16) { p.push(q); p.sort((a, b) => a[0] - b[0]); arrasto = p.findIndex(z => z === q); grava(p); }
+    };
+    cv.onpointermove = e => {
+      if (arrasto < 0) return;
+      const p = pts(), [x, y] = local(e), ini = arrasto === 0, fim = arrasto === p.length - 1;
+      const xmin = ini ? 0 : p[arrasto - 1][0] + 0.01, xmax = fim ? 1 : p[arrasto + 1][0] - 0.01;
+      p[arrasto] = [Math.round(Math.min(xmax, Math.max(xmin, x)) * 1000) / 1000, Math.round(y * 1000) / 1000]; grava(p);
+    };
+    cv.onpointerup = () => { if (arrasto >= 0) { arrasto = -1; registrar(); } };
+    cv.ondblclick = e => { const p = pts(), k = perto(p, local(e)); if (k > 0 && k < p.length - 1) { p.splice(k, 1); grava(p); registrar(); } };
+    cvDesenha();
+  }
+
+  // --- conta-gotas (o clique chega no palco: o zoom captura o ponteiro) ---
+  function contaGotas(ligar) { conta = ligar; stage.classList.toggle('pick', conta); aviso(conta ? 'Clique num ponto que deveria ser branco ou cinza' : ''); if (aj) mostraValores(); }
+  stage.addEventListener('click', async e => {
+    if (!conta) return;
+    const r = img.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
+    const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+    contaGotas(false);
+    try { const b = await api(`/api/editor/${i}/balanco`, { body: { x, y, ajustes: aj } }); aj.wb = { modo: 'custom', temp: b.temp, tint: b.tint }; mudou(); }
+    catch (er) { toast(er.message, true); }
+  });
+
+  // --- previa ao vivo (uma por vez; a ultima mudanca sempre e mostrada). Com zoom, a versao em tamanho cheio vem em seguida ---
   function agendar() { if (emVoo) { deNovo = true; return; } pedir(); }
   async function pedir() {
     emVoo = true; deNovo = false;
-    const alvo = i, lado = Math.min(2048, Math.round(Math.max(stage.clientWidth, stage.clientHeight) * (window.devicePixelRatio || 1)));
+    const alvo = i, texto = antes ? '{}' : ajTexto(), lado = Math.min(2048, Math.round(Math.max(stage.clientWidth, stage.clientHeight) * (window.devicePixelRatio || 1)));
     const t = setTimeout(() => aviso('Revelando…'), 600);
     try {
-      const r = await fetch(`/api/editor/${i}/previa?lado=${lado}&aj=${encodeURIComponent(antes ? '{}' : ajTexto())}`);
+      const r = await fetch(`/api/editor/${i}/previa?lado=${lado}&aj=${encodeURIComponent(texto)}`);
       if (!r.ok) throw new Error(((await r.json().catch(() => ({}))).detail) || 'Erro ' + r.status);
       const b = await r.blob();
-      if (alvo === i) { const u = URL.createObjectURL(b); img.src = u; if (urlBlob) URL.revokeObjectURL(urlBlob); urlBlob = u; }
+      if (alvo === i) { const u = URL.createObjectURL(b); zoom.foto(u, `/api/editor/${i}/previa?lado=0&aj=${encodeURIComponent(texto)}`); if (urlBlob) setTimeout(URL.revokeObjectURL, 2000, urlBlob); urlBlob = u; }
       clearTimeout(t); if (!conta) aviso('');
     } catch (e) { clearTimeout(t); aviso('Não foi possível revelar: ' + e.message); }
     emVoo = false; if (deNovo) pedir();
   }
 
+  // --- copiar / colar ---
+  function copiar() {
+    if (!aj) return;
+    return new Promise(res => {
+      const bg = document.createElement('div'); bg.className = 'modal-bg';
+      bg.innerHTML = `<div class="modal" style="white-space:normal;max-width:400px"><h2>📋 Copiar ajustes</h2><p class="mut mini">Escolha o que copiar desta foto. Depois use "Colar" (Ctrl+V) em outra foto ou "Colar em várias…".</p>
+        ${Object.entries(pre.grupos).map(([g, n]) => `<label style="font-weight:400;display:flex;gap:8px;align-items:center"><input type="checkbox" value="${g}" ${edCopia.grupos.includes(g) ? 'checked' : ''}> ${esc(n)}</label>`).join('')}
+        <div class="btns"><button class="cinza" id="cp-x">Cancelar</button><button class="verde" id="cp-ok">Copiar</button></div></div>`;
+      $modal.appendChild(bg);
+      const fecha = ok => {
+        const g = [...bg.querySelectorAll('input:checked')].map(c => c.value); bg.remove();
+        if (ok && g.length) { edCopia.ajustes = JSON.parse(ajTexto()); edCopia.grupos = g; toast(`Ajustes copiados: ${g.map(x => ED_SECOES.find(s => s[0] === x)[1]).join(', ')}`); }
+        res();
+      };
+      bg.querySelector('#cp-x').onclick = () => fecha(false); bg.querySelector('#cp-ok').onclick = () => fecha(true);
+      bg.querySelector('#cp-ok').focus();
+    });
+  }
+  // mesma regra do servidor (editor.mesclar): so os grupos copiados mudam
+  function mesclar(base, copia, grupos) {
+    const n = JSON.parse(ajTexto(base));
+    Object.keys(C).filter(c => !c.startsWith('wb.') && grupos.includes(edGrupo(c))).forEach(c => { n.valores[c] = copia.valores[c] !== undefined ? copia.valores[c] : C[c].padrao; });
+    if (grupos.includes('cor')) n.wb = copia.wb.modo === 'asShot' ? { modo: 'asShot', ...cf } : { ...copia.wb };
+    if (grupos.includes('curva')) n.curva = JSON.parse(JSON.stringify(copia.curva || {}));
+    return n;
+  }
+  function colar() {
+    if (!edCopia.ajustes) return toast('Copie os ajustes de uma foto primeiro (📋 Copiar).', true);
+    aj = mesclar(aj, edCopia.ajustes, edCopia.grupos); mudou(); toast('Ajustes colados');
+  }
+  function colarEmVarias() {
+    if (!edCopia.ajustes) return toast('Copie os ajustes de uma foto primeiro (📋 Copiar).', true);
+    marcando = new Set(fotos.map((_, k) => k).filter(k => k !== i)); barraMarcar(); tira();
+  }
+  function barraMarcar() {
+    const b = $('#e-marcar'); b.classList.toggle('hidden', !marcando); if (!marcando) return;
+    b.innerHTML = `<span>Marque as fotos que vão receber os ajustes copiados (${edCopia.grupos.map(x => ED_SECOES.find(s => s[0] === x)[1]).join(', ')}):</span>
+      <button class="pq cinza" id="m-todas">Todas</button><button class="pq cinza" id="m-nenhuma">Nenhuma</button>
+      <button class="pq verde" id="m-ok" ${marcando.size ? '' : 'disabled'}>Colar em ${marcando.size} foto(s)</button><button class="pq cinza" id="m-x">Cancelar</button>`;
+    b.querySelector('#m-todas').onclick = () => { marcando = new Set(fotos.map((_, k) => k)); barraMarcar(); tira(); };
+    b.querySelector('#m-nenhuma').onclick = () => { marcando = new Set(); barraMarcar(); tira(); };
+    b.querySelector('#m-x').onclick = () => { marcando = null; barraMarcar(); tira(); };
+    b.querySelector('#m-ok').onclick = async () => {
+      const alvos = [...marcando].sort((a, b) => a - b), outras = alvos.filter(k => k !== i);
+      if (alvos.includes(i)) { aj = mesclar(aj, edCopia.ajustes, edCopia.grupos); mudou(); }
+      marcando = null; barraMarcar();
+      if (outras.length) {
+        outras.forEach(k => { fotos[k].estado = 'salvando'; historico.delete(k); });
+        try { await api('/api/editor/aplicar', { body: { indices: outras, ajustes: edCopia.ajustes, grupos: edCopia.grupos } }); toast(`Ajustes colados em ${alvos.length} foto(s); salvando em segundo plano`); }
+        catch (e) { toast(e.message, true); }
+      }
+      tira();
+    };
+  }
+
   // --- fotos ---
   function tira() {
-    $('#e-strip').innerHTML = fotos.map((f, k) => `<span class="tb ${k === i ? 'cur' : ''}" data-k="${k}"><img src="/api/revisor/imagem/${k}?lado=160&v=${v}${versaoMini[k] ? '&m=' + versaoMini[k] : ''}" loading="lazy" title="${esc(f.nome)}">
+    $('#e-strip').innerHTML = fotos.map((f, k) => `<span class="tb ${k === i ? 'cur' : ''} ${marcando && marcando.has(k) ? 'marcada' : ''}" data-k="${k}"><img src="/api/revisor/imagem/${k}?lado=160&v=${v}${versaoMini[k] ? '&m=' + versaoMini[k] : ''}" loading="lazy" title="${esc(f.nome)}">
+      ${marcando ? `<b class="ck">${marcando.has(k) ? '✓' : ''}</b>` : ''}
       ${f.estado === 'salvando' ? '<b class="bd">salvando…</b>' : f.estado.startsWith('erro') ? '<b class="bd err" title="' + esc(f.estado) + '">erro</b>' : f.editada ? '<b class="bd">✎</b>' : ''}</span>`).join('');
-    $('#e-strip').querySelectorAll('.tb').forEach(t => t.onclick = () => ir(+t.dataset.k));
+    $('#e-strip').querySelectorAll('.tb').forEach(t => t.onclick = () => {
+      const k = +t.dataset.k;
+      if (marcando) { marcando.has(k) ? marcando.delete(k) : marcando.add(k); barraMarcar(); tira(); } else ir(k);
+    });
     const cur = $('#e-strip .tb.cur'); if (cur) cur.scrollIntoView({ block: 'nearest', inline: 'center' });
   }
   async function atualizaLista() {
@@ -706,20 +881,23 @@ async function abrirEditor(inicio = 0) {
     } catch (e) { return 0; }
   }
   function salvarSeMudou() {
+    if (!aj) return;
     const atual = ajTexto(); if (atual === salvo) return;
     salvo = atual; fotos[i].estado = 'salvando';
     api(`/api/editor/${i}/salvar`, { body: { ajustes: aj } }).catch(e => toast('Não foi possível salvar: ' + e.message, true));
   }
   async function carregar() {
+    aj = null;
     $('#e-info').innerHTML = `<b>Foto ${i + 1}/${fotos.length}</b> · ${esc(fotos[i].nome)}`;
-    img.src = `/api/revisor/imagem/${i}?v=${v}${versaoMini[i] ? '&m=' + versaoMini[i] : ''}`;   // aparece na hora; a previa do LightCraft vem em seguida
+    zoom.foto(`/api/revisor/imagem/${i}?v=${v}${versaoMini[i] ? '&m=' + versaoMini[i] : ''}`, '');   // aparece na hora; a previa do LightCraft vem em seguida
     tira();
     try {
       const d = await api(`/api/editor/${i}`); cf = d.como_fotografado;
-      aj = { valores: { ...d.ajustes.valores }, wb: d.ajustes.wb.modo === 'custom' ? d.ajustes.wb : { modo: d.ajustes.wb.modo, ...cf } };
-      if (aj.wb.modo !== 'asShot' && aj.wb.modo !== 'custom') { try { const r = await api(`/api/editor/${i}/balanco`, { body: { modo: aj.wb.modo, ajustes: aj } }); aj.wb = { modo: aj.wb.modo, temp: r.temp, tint: r.tint }; } catch (e) { } }
+      const a = d.ajustes;
+      aj = { valores: { ...a.valores }, wb: a.wb.modo === 'asShot' ? { modo: 'asShot', ...cf } : { ...a.wb }, curva: a.curva || {} };
+      if (aj.wb.modo !== 'asShot' && aj.wb.modo !== 'custom' && aj.wb.temp === undefined) { try { const r = await api(`/api/editor/${i}/balanco`, { body: { modo: aj.wb.modo, ajustes: aj } }); aj.wb = { modo: aj.wb.modo, temp: r.temp, tint: r.tint }; } catch (e) { } }
       Object.keys(C).forEach(c => { if (!c.startsWith('wb.') && aj.valores[c] === undefined) aj.valores[c] = C[c].padrao; });
-      salvo = ajTexto(); $('#e-rest').disabled = !d.editada; mostraValores(); agendar();
+      salvo = ajTexto(); $('#e-rest').disabled = !d.editada; hist(); botoesHist(); mostraValores(); agendar();
     } catch (e) { aviso(e.message); }
   }
   function ir(k) { if (k < 0 || k >= fotos.length || k === i) return; salvarSeMudou(); i = k; antes = false; $('#e-tag').classList.add('hidden'); contaGotas(false); carregar(); }
@@ -730,25 +908,38 @@ async function abrirEditor(inicio = 0) {
     let n = await atualizaLista();
     while (n > 0) { aviso(`Salvando ${n} foto(s) editada(s)…`); await new Promise(r => setTimeout(r, 800)); n = await atualizaLista(); }
     const erros = fotos.filter(f => f.estado.startsWith('erro'));
-    document.removeEventListener('keydown', tecla); if (urlBlob) URL.revokeObjectURL(urlBlob); el.remove();
+    document.removeEventListener('keydown', tecla); zoom.destruir(); el.remove();
     if (erros.length) await alerta('Atenção', `${erros.length} foto(s) não puderam ser salvas e ficaram como estavam:\n${erros.map(f => f.nome).join(', ')}`);
     render();
   }
   function tecla(e) {
     if (document.querySelector('.modal-bg') || !document.body.contains(el)) return;
-    const emControle = ['INPUT', 'SELECT'].includes(document.activeElement.tagName);
-    if (e.key === 'Escape') { if (conta) contaGotas(false); else concluir(); }
-    else if (!emControle && e.key === 'ArrowRight') ir(i + 1); else if (!emControle && e.key === 'ArrowLeft') ir(i - 1);
-    else if (e.key === '\\') alternarAntes(); else if (e.key.toLowerCase() === 'w' && !emControle) contaGotas(!conta);
+    const emControle = ['INPUT', 'SELECT'].includes(document.activeElement.tagName) && document.activeElement.type !== 'range';
+    const ctrl = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
+    if (e.key === 'Escape') { if (conta) contaGotas(false); else if (marcando) { marcando = null; barraMarcar(); tira(); } else concluir(); return; }
+    if (emControle) return;
+    if (ctrl && k === 'z') { e.preventDefault(); passo(e.shiftKey ? 1 : -1); }
+    else if (ctrl && k === 'y') { e.preventDefault(); passo(1); }
+    else if (ctrl && k === 'c') { e.preventDefault(); copiar(); }
+    else if (ctrl && k === 'v') { e.preventDefault(); e.shiftKey ? colarEmVarias() : colar(); }
+    else if (ctrl) return;
+    else if (document.activeElement.type === 'range' && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;   // setas ajustam a regua com foco
+    else if (e.key === 'ArrowRight') ir(i + 1); else if (e.key === 'ArrowLeft') ir(i - 1);
+    else if (e.key === '\\') alternarAntes(); else if (k === 'w') contaGotas(!conta);
+    else if (e.key === '+' || e.key === '=') zoom.mais(); else if (e.key === '-' || e.key === '_') zoom.menos();
+    else if (e.key === '0') zoom.ajustar(); else if (e.key === '1') zoom.cem();
   }
   document.addEventListener('keydown', tecla);
   $('#e-ant').onclick = () => ir(i - 1); $('#e-prox').onclick = () => ir(i + 1); $('#e-antes').onclick = alternarAntes; $('#e-fim').onclick = concluir;
-  $('#e-zerar').onclick = () => { aj = { valores: Object.fromEntries(Object.keys(C).filter(c => !c.startsWith('wb.')).map(c => [c, C[c].padrao])), wb: { modo: 'asShot', ...cf } }; mostraValores(); agendar(); };
+  $('#e-un').onclick = () => passo(-1); $('#e-re').onclick = () => passo(1);
+  $('#e-zm').onclick = zoom.menos; $('#e-zp').onclick = zoom.mais; $('#e-zt').onclick = zoom.alternar;
+  $('#e-copiar').onclick = copiar; $('#e-colar').onclick = colar; $('#e-varias').onclick = colarEmVarias;
+  $('#e-zerar').onclick = () => { if (!aj) return; aj = zerados(); mudou(); };
   $('#e-rest').onclick = async () => {
     if (!await confirmar('Restaurar original', `Desfazer todas as edições de "${fotos[i].nome}" e voltar à foto original?`, 'Restaurar', 'Cancelar')) return;
-    try { await api(`/api/editor/${i}/restaurar`, { body: {} }); versaoMini[i] = Date.now(); await atualizaLista(); carregar(); } catch (e) { toast(e.message, true); }
+    try { await api(`/api/editor/${i}/restaurar`, { body: {} }); versaoMini[i] = Date.now(); historico.delete(i); await atualizaLista(); carregar(); } catch (e) { toast(e.message, true); }
   };
-  addEventListener('resize', () => { if (document.body.contains(el)) agendar(); });
+  addEventListener('resize', () => { if (document.body.contains(el)) { cvDesenha(); agendar(); } });
   painel(); carregar();
 }
 

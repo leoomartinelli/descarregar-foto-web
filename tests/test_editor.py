@@ -197,3 +197,77 @@ def test_editar_raw_vira_jpeg_e_o_raw_fica_guardado(tmp_path):
     assert editor.salvar_agora(editada, {"valores": {"light.exposure": -0.5}}) == editada
     assert editor.restaurar(editada) == str(foto) and foto.read_bytes() == original
     assert not (pasta / "Ana_001.jpg").exists() and E.arquivos_transferidos == [str(foto)]
+
+
+# ---------- curva de pontos, copiar/colar, predefinicoes, zoom ----------
+
+def test_curva_de_pontos_validada():
+    aj = editor.limpar({"curva": {"master": [[1.2, 1], [0, -1], [0.5, 0.7], [0.5, 0.6]], "red": [[0, 0], [1, 1]],
+                                  "hack": [[0, 1]]}})
+    assert aj["curva"] == {"master": [[0.0, 0.0], [0.5, 0.6], [1.0, 1.0]]}          # ordenada, sem x repetido
+    assert editor.e_padrao({"curva": {"master": [[0, 0], [0.5, 0.5], [1, 1]]}})      # linha reta = sem curva
+    assert editor.para_lightcraft({"curva": {"blue": [[0, 0], [0.5, 0.4], [1, 1]]}})["curve"]["blue"] == \
+        [[0.0, 0.0], [0.5, 0.4], [1.0, 1.0]]
+
+
+def test_colar_so_os_grupos_escolhidos():
+    base = {"valores": {"light.exposure": 1, "color.saturation": 10, "curve.darks": 5}, "wb": {"modo": "auto", "temp": 5000, "tint": 3}}
+    copia = {"valores": {"light.exposure": -1, "color.saturation": 50, "curve.darks": -20}, "wb": {"modo": "asShot"},
+             "curva": {"master": [[0, 0], [0.5, 0.6], [1, 1]]}}
+    so_luz = editor.mesclar(base, copia, ["luz"])
+    assert so_luz["valores"]["light.exposure"] == -1 and so_luz["valores"]["color.saturation"] == 10
+    assert so_luz["wb"]["modo"] == "auto" and so_luz["curva"] == {}
+    tudo = editor.mesclar(base, copia, ["luz", "curva", "cor"])
+    assert tudo["wb"] == {"modo": "asShot"} and tudo["curva"]["master"][1] == [0.5, 0.6]
+    assert tudo["valores"]["curve.darks"] == -20
+
+
+def test_predefinicoes_com_nome():
+    for p in editor.predefinicoes():
+        editor.excluir_predefinicao(p["nome"])
+    r = local.post("/api/editor-predefinicoes", json={"nome": "Louvor palco", "ajustes": {"valores": {"light.exposure": 0.7}}})
+    assert [p["nome"] for p in r.json()["predefinicoes"]] == ["Louvor palco"]
+    local.post("/api/editor-predefinicoes", json={"nome": "louvor PALCO", "ajustes": {"valores": {"light.exposure": 0.3}}})
+    lista = local.get("/api/editor-predefinicoes").json()
+    assert len(lista["predefinicoes"]) == 1 and lista["predefinicoes"][0]["ajustes"]["valores"]["light.exposure"] == 0.3
+    assert local.post("/api/editor-predefinicoes", json={"nome": "  "}).status_code == 400
+    assert local.delete("/api/editor-predefinicoes", params={"nome": "louvor PALCO"}).json()["predefinicoes"] == []
+
+
+@motor
+def test_curvas_prontas_do_lightcraft():
+    nomes = [c["nome"] for c in local.get("/api/editor-predefinicoes").json()["curvas"]]
+    assert nomes[:3] == ["Linear", "Contraste médio", "Contraste forte"]
+
+
+@motor
+def test_curva_de_pontos_muda_a_foto():
+    descarregar(1)
+    def media(aj):
+        r = local.get("/api/editor/0/previa", params={"aj": json.dumps(aj), "lado": 300})
+        return np.asarray(Image.open(io.BytesIO(r.content)).convert("RGB"), float).mean((0, 1))
+    normal = media({})
+    assert media({"curva": {"master": [[0, 0], [0.5, 0.75], [1, 1]]}}).mean() > normal.mean() + 15   # clareia
+    vermelho = media({"curva": {"red": [[0, 0], [0.5, 0.75], [1, 1]]}})
+    assert vermelho[0] > normal[0] + 15 and abs(vermelho[2] - normal[2]) < 5
+
+
+@motor
+def test_colar_em_varias_fotos():
+    fotos = descarregar(3)
+    copia = {"valores": {"light.exposure": 0.8, "color.saturation": 25}, "wb": {"modo": "asShot"}}
+    r = local.post("/api/editor/aplicar", json={"indices": [1, 2], "ajustes": copia, "grupos": ["luz"]})
+    assert r.json() == {"ok": True, "fotos": 2}
+    esperar_salvar()
+    info = local.get("/api/editor").json()["fotos"]
+    assert [f["editada"] for f in info] == [False, True, True]
+    aj = local.get("/api/editor/2").json()["ajustes"]["valores"]
+    assert aj["light.exposure"] == 0.8 and aj["color.saturation"] == 0          # so o grupo Luz foi colado
+    assert os.path.exists(os.path.join(os.path.dirname(fotos[1]), ".originais", os.path.basename(fotos[1])))
+
+
+@motor
+def test_zoom_do_editor_revela_em_tamanho_cheio():
+    descarregar(1)
+    r = local.get("/api/editor/0/previa", params={"aj": '{"valores": {"light.exposure": 0.5}}', "lado": 0})
+    assert r.status_code == 200 and Image.open(io.BytesIO(r.content)).size == (1800, 1200)

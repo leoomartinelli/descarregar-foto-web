@@ -68,7 +68,7 @@ Compilar localmente (gera para o sistema atual): `pip install pyinstaller`, `pyt
 | Cópia paralela, numeração `Fotografo_001`, marcador "já descarregadas", subpastas `_2`, `_3`, aviso de RAW | `app/transfer.py` |
 | Conversão de RAW para JPEG ao descarregar (pergunta antes; resolução total; apaga só a cópia RAW do PC, nunca o cartão) com o motor do [LightCraft](https://github.com/storytold/lightcraft) (MIT/Apache-2.0) | `app/raw.py` |
 | Seleção de fotos (miniaturas, teclado, desfazer, apagar, zoom até o tamanho original) | Botão "Selecionar Fotos" |
-| Editor de fotos (Luz, Curva de tons e Cor com o motor do LightCraft; original guardada em `.originais`) | Botão "Editar Fotos" / `app/editor.py` |
+| Editor de fotos (Luz, Curva de tons com curva de pontos e Cor com o motor do LightCraft; zoom, copiar/colar em várias fotos, predefinições, desfazer; original guardada em `.originais`) | Botão "Editar Fotos" / `app/editor.py` |
 | Upload para o Google Drive | Tela de descarregamento |
 | Conta Google (credenciais, login OAuth, teste, desconectar) | Painel → Login Google |
 | Pastas do Drive e pastas locais do dia | Painel → Config Drive |

@@ -55,8 +55,28 @@ _worker = None
 
 # ---------- ajustes ----------
 
+CANAIS_CURVA = ("master", "red", "green", "blue")     # curva de pontos: RGB e cada cor
+GRUPOS = {"luz": "Luz", "curva": "Curva de tons", "cor": "Cor (inclui equilíbrio de branco)"}   # para copiar/colar
+
+
 def ajustes_padrao():
-    return {"valores": {c: v[4] for c, v in CONTROLES.items() if v[4] is not None}, "wb": {"modo": "asShot"}}
+    return {"valores": {c: v[4] for c, v in CONTROLES.items() if v[4] is not None}, "wb": {"modo": "asShot"},
+            "curva": {}}
+
+
+def _pontos(pts):
+    """Pontos da curva (0..1), ordenados por x, sem x repetido; linha reta (sem efeito) vira lista vazia."""
+    saida = {}
+    for p in (pts or [])[:16]:
+        try:
+            x, y = min(1.0, max(0.0, float(p[0]))), min(1.0, max(0.0, float(p[1])))
+        except (TypeError, ValueError, IndexError):
+            continue
+        saida[round(x, 4)] = round(y, 4)
+    pts = sorted(saida.items())
+    if len(pts) < 2 or all(abs(x - y) < 1e-4 for x, y in pts):
+        return []
+    return [list(p) for p in pts]
 
 
 def limpar(aj):
@@ -69,7 +89,8 @@ def limpar(aj):
             valores[c] = min(mx, max(mn, float(v)))
     wb = aj.get("wb") or {}
     modo = wb.get("modo") if wb.get("modo") in MODOS_WB else "asShot"
-    saida = {"valores": valores, "wb": {"modo": modo}}
+    curva = {c: _pontos((aj.get("curva") or {}).get(c)) for c in CANAIS_CURVA}
+    saida = {"valores": valores, "wb": {"modo": modo}, "curva": {c: p for c, p in curva.items() if p}}
     # os modos prontos (Tungstenio, Nublado...) tambem levam temperatura e matiz: o LightCraft revela pelos numeros,
     # o modo e so o nome. "Como fotografado" usa os da propria foto.
     if modo != "asShot" and wb.get("temp") is not None:
@@ -82,7 +103,8 @@ def limpar(aj):
 
 def e_padrao(aj):
     aj = limpar(aj)
-    return aj["wb"]["modo"] == "asShot" and all(abs(v - CONTROLES[c][4]) < 1e-9 for c, v in aj["valores"].items())
+    return aj["wb"]["modo"] == "asShot" and not aj["curva"] and \
+        all(abs(v - CONTROLES[c][4]) < 1e-9 for c, v in aj["valores"].items())
 
 
 def para_lightcraft(aj):
@@ -92,6 +114,7 @@ def para_lightcraft(aj):
     for c, v in aj["valores"].items():
         secao, campo = c.split(".")
         s[secao][campo] = v
+    s["curve"].update(aj["curva"])                      # curva de pontos: {"master": [[x, y], ...], ...}
     s["wb"] = {"mode": aj["wb"]["modo"]}
     if "temp" in aj["wb"]:
         s["wb"].update(temp=aj["wb"]["temp"], tint=aj["wb"]["tint"])
@@ -217,17 +240,91 @@ def balanco(foto, modo=None, x=None, y=None, aj=None):
 
 
 def previa(foto, aj, lado=1400):
-    lado = max(200, min(int(lado), LADO_COPIA))
-    origem = _copia_reduzida(original_de(foto))
+    """lado=0: tamanho cheio a partir da original (zoom do editor, ~1 s); senao da copia reduzida (~0,2 s)."""
+    if int(lado) == 0:
+        origem, lado = original_de(foto), None
+    else:
+        lado = max(200, min(int(lado), LADO_COPIA))
+        origem = _copia_reduzida(original_de(foto))
     with _lock_render:
         fd, saida = tempfile.mkstemp(suffix=".jpg")
         os.close(fd)
         try:
-            _render(origem, saida, aj, lado=lado, qualidade=85)
+            _render(origem, saida, aj, lado=lado, qualidade=85 if lado else 90)
             with open(saida, "rb") as f:
                 return f.read()
         finally:
             os.remove(saida)
+
+
+# ---------- copiar/colar e predefinicoes ----------
+
+def _grupo(controle):
+    return "cor" if controle.startswith(("wb.", "color.")) else "curva" if controle.startswith("curve.") else "luz"
+
+
+def mesclar(base, copiados, grupos):
+    """Ajustes de `base` com os grupos escolhidos (luz, curva, cor) trocados pelos de `copiados`."""
+    base, copiados = limpar(base), limpar(copiados)
+    grupos = set(grupos or GRUPOS)
+    novo = {"valores": {c: v for c, v in base["valores"].items() if _grupo(c) not in grupos},
+            "wb": base["wb"], "curva": {} if "curva" in grupos else base["curva"]}
+    novo["valores"].update({c: v for c, v in copiados["valores"].items() if _grupo(c) in grupos})
+    if "cor" in grupos:
+        novo["wb"] = copiados["wb"]
+    if "curva" in grupos:
+        novo["curva"] = copiados["curva"]
+    return limpar(novo)
+
+
+def aplicar_em(fotos, copiados, grupos):
+    """Cola os ajustes em varias fotos (cada uma mantem o que nao foi copiado) e salva em segundo plano."""
+    for foto in fotos:
+        salvar(foto, mesclar(ajustes_de(foto), copiados, grupos))
+
+
+ARQ_PREDEFINICOES = os.path.join(core.DATA_DIR, "predefinicoes_edicao.json")
+
+
+def predefinicoes():
+    dados = core.ler_json(ARQ_PREDEFINICOES, [])
+    return [{"nome": p["nome"], "ajustes": limpar(p.get("ajustes"))} for p in dados if isinstance(p, dict) and p.get("nome")]
+
+
+def salvar_predefinicao(nome, aj):
+    nome = (nome or "").strip()[:60]
+    if not nome:
+        raise ValueError("Dê um nome para a predefinição.")
+    lista = [p for p in predefinicoes() if p["nome"].lower() != nome.lower()]
+    lista.append({"nome": nome, "ajustes": limpar(aj)})
+    lista.sort(key=lambda p: p["nome"].lower())
+    core.gravar_json(ARQ_PREDEFINICOES, lista)
+    return lista
+
+
+def excluir_predefinicao(nome):
+    lista = [p for p in predefinicoes() if p["nome"] != nome]
+    core.gravar_json(ARQ_PREDEFINICOES, lista)
+    return lista
+
+
+def curvas_prontas():
+    """Curvas de pontos que vem com o LightCraft (Linear, Contraste medio, Contraste forte)."""
+    global _curvas
+    if _curvas is None:
+        nomes = {"Linear": "Linear", "Medium Contrast": "Contraste médio", "Strong Contrast": "Contraste forte"}
+        try:
+            r = _rodar(["run", "--demo", "curve.presets"]).splitlines()[0]
+            lista = json.loads(r)["result"]["presets"]
+            _curvas = [{"nome": nomes.get(p["name"], p["name"]), "curva": {c: _pontos(p.get(c)) for c in CANAIS_CURVA}}
+                       for p in lista if p.get("builtin")]
+        except Exception as e:
+            print(f"Curvas prontas do LightCraft indisponiveis: {e}")
+            return [{"nome": "Linear", "curva": {}}]
+    return _curvas
+
+
+_curvas = None
 
 
 # ---------- salvar / restaurar ----------
