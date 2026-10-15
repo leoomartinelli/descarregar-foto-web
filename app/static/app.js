@@ -506,6 +506,96 @@ async function finalizarServir(ignorar) {
   } catch (e) { if (b) { b.disabled = false; b.textContent = '🏁 Finalizar Servir'; } alerta('Erro ao Finalizar', 'Não foi possível enviar os dados ao webhook:\n' + e.message); }
 }
 
+// ---------- zoom da tela de selecao ----------
+// Roda do mouse / pinca no ponto do cursor, arrastar para mover, duplo clique alterna entre "tela inteira" e 100%.
+// Quando a foto aparece maior que a imagem carregada (zoom ou tela grande), busca a foto no tamanho original.
+// O zoom e a posicao continuam ao trocar de foto: da para conferir o foco da mesma regiao numa sequencia.
+function criarZoom(stage, img, aoMudar) {
+  const Z = { z: 1, cx: .5, cy: .5, urlOrig: '', alta: false, origW: 0, carregando: false, cem: null };
+  let fitW = 0, fitH = 0, sw = 0, sh = 0, ptrs = new Map(), gesto = null;
+  const selo = document.createElement('div'); selo.className = 'zselo hidden'; stage.appendChild(selo);
+  function medidas() {
+    sw = stage.clientWidth; sh = stage.clientHeight;
+    const ar = (img.naturalWidth || 3) / (img.naturalHeight || 2);
+    fitW = Math.min(sw, sh * ar); fitH = fitW / ar;
+  }
+  const maxZ = () => Math.max(2, Z.origW ? 4 * Z.origW / fitW : 8);   // ate 400% do original
+  const pos = () => ({ w: fitW * Z.z, h: fitH * Z.z, l: sw / 2 - Z.cx * fitW * Z.z, t: sh / 2 - Z.cy * fitH * Z.z });
+  function desenha() {
+    if (!fitW) return;
+    let { w, h, l, t } = pos();
+    if (w <= sw) { l = (sw - w) / 2; Z.cx = .5; } else { l = Math.min(0, Math.max(sw - w, l)); Z.cx = (sw / 2 - l) / w; }
+    if (h <= sh) { t = (sh - h) / 2; Z.cy = .5; } else { t = Math.min(0, Math.max(sh - h, t)); Z.cy = (sh / 2 - t) / h; }
+    Object.assign(img.style, { width: w + 'px', height: h + 'px', left: l + 'px', top: t + 'px' });
+    stage.classList.toggle('zoom', Z.z > 1.01);
+    if (!Z.alta && w > img.naturalWidth * 1.15) carregarOriginal();
+    aoMudar(Z.z <= 1.01 ? 'Tela inteira' : Z.origW ? Math.round(w / Z.origW * 100) + '%' : Z.z.toFixed(1) + '×');
+  }
+  function zoomEm(novo, mx, my) {
+    const a = pos(), px = (mx - a.l) / a.w, py = (my - a.t) / a.h;
+    Z.z = Math.min(maxZ(), Math.max(1, novo));
+    const w = fitW * Z.z, h = fitH * Z.z;
+    Z.cx = (sw / 2 - (mx - px * w)) / w; Z.cy = (sh / 2 - (my - py * h)) / h;
+    desenha();
+  }
+  function carregarOriginal() {
+    if (Z.carregando || !Z.urlOrig) return;
+    Z.carregando = true; const url = Z.urlOrig, im = new Image();
+    const t = setTimeout(() => { if (Z.urlOrig === url) selo.classList.remove('hidden'); }, 300);
+    selo.textContent = 'Carregando em alta resolução…';
+    im.onload = () => {
+      clearTimeout(t); selo.classList.add('hidden'); Z.carregando = false;
+      if (Z.urlOrig !== url) return desenha();             // ja trocou de foto: busca a original da atual, se precisar
+      Z.alta = true; Z.origW = im.naturalWidth; img.src = url;
+      if (Z.cem) { const c = Z.cem; Z.cem = null; zoomEm(Z.origW / fitW, c.x, c.y); } else desenha();
+    };
+    im.onerror = () => { clearTimeout(t); Z.carregando = false; if (Z.urlOrig !== url) return desenha(); selo.textContent = 'Não foi possível carregar em alta resolução'; selo.classList.remove('hidden'); };
+    im.src = url;
+  }
+  const centro = () => ({ x: sw / 2, y: sh / 2 });
+  const ajustar = () => { Z.z = 1; Z.cx = Z.cy = .5; Z.cem = null; desenha(); };
+  function cem(p = centro()) {                             // 100%: um pixel da foto = um pixel da tela
+    if (Z.origW) zoomEm(Z.origW / fitW, p.x, p.y);
+    else { Z.cem = p; zoomEm(Math.max(Z.z, 2), p.x, p.y); carregarOriginal(); }
+  }
+  const local = e => { const r = stage.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  stage.addEventListener('wheel', e => { e.preventDefault(); const p = local(e); zoomEm(Z.z * Math.exp(-e.deltaY * 0.0015), p.x, p.y); }, { passive: false });
+  stage.addEventListener('dblclick', e => { if (Z.z > 1.01) ajustar(); else cem(local(e)); });
+  stage.addEventListener('pointerdown', e => {
+    stage.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, local(e));
+    const ps = [...ptrs.values()];
+    if (ps.length === 2) gesto = { tipo: 'pinca', d: Math.hypot(ps[0].x - ps[1].x, ps[0].y - ps[1].y), z: Z.z };
+    else if (Z.z > 1.01) { gesto = { tipo: 'mover', ...local(e), cx: Z.cx, cy: Z.cy }; stage.classList.add('arrastando'); }
+  });
+  stage.addEventListener('pointermove', e => {
+    if (!ptrs.has(e.pointerId) || !gesto) return;
+    ptrs.set(e.pointerId, local(e));
+    const ps = [...ptrs.values()];
+    if (gesto.tipo === 'pinca' && ps.length === 2) {
+      const d = Math.hypot(ps[0].x - ps[1].x, ps[0].y - ps[1].y);
+      zoomEm(gesto.z * d / gesto.d, (ps[0].x + ps[1].x) / 2, (ps[0].y + ps[1].y) / 2);
+    } else if (gesto.tipo === 'mover') {
+      const p = local(e); Z.cx = gesto.cx - (p.x - gesto.x) / (fitW * Z.z); Z.cy = gesto.cy - (p.y - gesto.y) / (fitH * Z.z); desenha();
+    }
+  });
+  const solta = e => { ptrs.delete(e.pointerId); if (ptrs.size < 2 && gesto && gesto.tipo === 'pinca') gesto = null; if (!ptrs.size) { gesto = null; stage.classList.remove('arrastando'); } };
+  stage.addEventListener('pointerup', solta); stage.addEventListener('pointercancel', solta);
+  img.draggable = false;
+  img.addEventListener('load', () => { medidas(); desenha(); });
+  const redimensiona = () => { medidas(); desenha(); };
+  addEventListener('resize', redimensiona);
+  return {
+    // nova foto: mostra a versao leve; a original vem sozinha se o zoom (que continua) precisar
+    foto(urlLeve, urlOrig) { Z.urlOrig = urlOrig; Z.alta = false; Z.origW = 0; Z.cem = null; selo.classList.add('hidden'); img.src = urlLeve; },
+    mais: () => zoomEm(Z.z * 1.5, centro().x, centro().y),
+    menos: () => zoomEm(Z.z / 1.5, centro().x, centro().y),
+    alternar: () => (Z.z > 1.01 ? ajustar() : cem()),
+    ajustar, cem: () => cem(),
+    precisaOriginal: () => Z.z > 1.01,
+    destruir: () => removeEventListener('resize', redimensiona),
+  };
+}
+
 // ---------- REVISOR (selecao de fotos) ----------
 async function abrirRevisor() {
   let lista; try { lista = (await api('/api/revisor')).arquivos; } catch (e) { return toast(e.message, true); }
@@ -515,17 +605,20 @@ async function abrirRevisor() {
   const desc = new Set(); const ordemDesc = []; let i = 0; let tempo = null;
   const el = document.createElement('div'); el.className = 'rev';
   el.innerHTML = `<div class="bar"><button class="cinza" id="r-ant">◀ Anterior</button><div class="info" id="r-info"></div><button class="cinza" id="r-prox">Próxima ▶</button>
+    <span class="zgrupo"><button class="cinza" id="r-zm" title="Diminuir zoom (−)">−</button><button class="cinza" id="r-zt" title="Alternar entre tela inteira e 100% (duplo clique na foto)">Tela inteira</button><button class="cinza" id="r-zp" title="Aumentar zoom (+)">+</button></span>
     <button class="verm" id="r-desc">🗑 Descartar (Del)</button><button class="cinza" id="r-undo">↩ Desfazer (Ctrl+Z)</button><button class="verde" id="r-fim">✅ Finalizar Seleção</button><button class="cinza" id="r-sair">✕</button></div>
     <div class="stage" id="r-stage"><img id="r-img" alt=""><div class="stamp hidden" id="r-stamp">DESCARTADA</div></div>
-    <div class="strip" id="r-strip"></div><div class="kbd">← → navegar · Del/Backspace/X descartar · Ctrl+Z desfazer · Enter finalizar · Esc sair</div>`;
+    <div class="strip" id="r-strip"></div><div class="kbd">← → navegar · Del/Backspace/X descartar · Ctrl+Z desfazer · Enter finalizar · Esc sair<br>Zoom: roda do mouse ou pinça · arrastar move · duplo clique ou 1 = 100% · + − · 0 = tela inteira</div>`;
   document.body.appendChild(el);
   const $ = s => el.querySelector(s); const img = $('#r-img');
+  const zoom = criarZoom($('#r-stage'), img, t => { $('#r-zt').textContent = t; });
   $('#r-strip').innerHTML = lista.map((n, k) => `<img data-k="${k}" title="${esc(n)}" loading="lazy" src="/api/revisor/imagem/${k}?lado=160&v=${v}">`).join('');
   $('#r-strip').querySelectorAll('img').forEach(t => t.onclick = () => { i = +t.dataset.k; mostra(); });
-  function precarrega() { [i + 1, i - 1, i + 2].forEach(k => { if (k >= 0 && k < lista.length) new Image().src = `/api/revisor/imagem/${k}?v=${v}`; }); }
+  // com zoom, as proximas ja vem no tamanho original (o zoom continua ao trocar de foto)
+  function precarrega() { [i + 1, i - 1, i + 2].forEach(k => { if (k >= 0 && k < lista.length) new Image().src = `/api/revisor/imagem/${k}?${zoom.precisaOriginal() && k === i + 1 ? 'lado=0&' : ''}v=${v}`; }); }
   function mostra() {
     const d = desc.has(i);
-    img.src = `/api/revisor/imagem/${i}?v=${v}`; $('#r-stage').classList.toggle('desc', d); $('#r-stamp').classList.toggle('hidden', !d);
+    zoom.foto(`/api/revisor/imagem/${i}?v=${v}`, `/api/revisor/imagem/${i}?lado=0&v=${v}`); $('#r-stage').classList.toggle('desc', d); $('#r-stamp').classList.toggle('hidden', !d);
     const rest = lista.length - desc.size;
     $('#r-info').innerHTML = `<b>Foto ${i + 1}/${lista.length}</b> · ${esc(lista[i])}<br><span class="mini" style="color:#aaa">${desc.size} marcada(s) para descarte · ${rest} mantida(s)</span>`;
     $('#r-undo').disabled = !ordemDesc.length;
@@ -536,7 +629,7 @@ async function abrirRevisor() {
   const prox = () => { if (i < lista.length - 1) { i++; mostra(); } }, ant = () => { if (i > 0) { i--; mostra(); } };
   function descartar() { if (!desc.has(i)) { desc.add(i); ordemDesc.push(i); } if (i < lista.length - 1) i++; mostra(); }
   function desfazer() { if (!ordemDesc.length) return; const k = ordemDesc.pop(); desc.delete(k); i = k; mostra(); }
-  async function fechar() { document.removeEventListener('keydown', tecla); el.remove(); await render(); }
+  async function fechar() { document.removeEventListener('keydown', tecla); zoom.destruir(); el.remove(); await render(); }
   async function finalizar() {
     let msg = 'Revisão terminada! Nenhuma foto foi apagada.';
     if (desc.size) {
@@ -545,7 +638,7 @@ async function abrirRevisor() {
     try {
       const r = await api('/api/revisor/finalizar', { body: { descartar: [...desc] } });
       if (desc.size) msg = `Limpeza concluída! ${r.apagadas} foto(s) foram apagadas.` + (r.erros ? `\n(Erro ao apagar ${r.erros} foto(s).)` : '');
-      document.removeEventListener('keydown', tecla); el.remove();
+      document.removeEventListener('keydown', tecla); zoom.destruir(); el.remove();
       await alerta(desc.size ? 'Sucesso' : 'Concluído', msg);
       api('/api/revisor/abrir-pasta', { body: {} }).catch(() => { });
       render();
@@ -561,10 +654,13 @@ async function abrirRevisor() {
     else if (['Delete', 'Backspace', 'x', 'X'].includes(e.key)) { e.preventDefault(); descartar(); }
     else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); desfazer(); }
     else if (e.key === 'Enter') finalizar(); else if (e.key === 'Escape') sair();
+    else if (e.key === '+' || e.key === '=') zoom.mais(); else if (e.key === '-' || e.key === '_') zoom.menos();
+    else if (e.key === '0') zoom.ajustar(); else if (e.key === '1') zoom.cem();
   }
   document.addEventListener('keydown', tecla);
   $('#r-ant').onclick = ant; $('#r-prox').onclick = prox; $('#r-desc').onclick = descartar; $('#r-undo').onclick = desfazer;
   $('#r-fim').onclick = finalizar; $('#r-sair').onclick = sair;
+  $('#r-zm').onclick = zoom.menos; $('#r-zp').onclick = zoom.mais; $('#r-zt').onclick = zoom.alternar;
   mostra();
 }
 

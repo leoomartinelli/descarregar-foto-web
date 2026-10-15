@@ -407,9 +407,11 @@ def revisor_lista():
 
 @app.get("/api/revisor/imagem/{i}")
 def revisor_imagem(i: int, request: Request, lado: int = 1600):
+    """lado=0: tamanho original (zoom da tela de selecao); senao o maior lado limitado a `lado`."""
     if not 0 <= i < len(E.arquivos_transferidos):
         erro("Foto inexistente.", 404)
-    lado = max(64, min(lado, 4000))
+    if lado != 0:
+        lado = max(64, min(lado, 4000))
     caminho = E.arquivos_transferidos[i]
     # a URL so tem o indice: a mesma URL aponta para fotos diferentes a cada descarregamento. Por isso o navegador
     # precisa revalidar (ETag do arquivo real) em vez de reaproveitar a foto do descarregamento anterior.
@@ -421,10 +423,10 @@ def revisor_imagem(i: int, request: Request, lado: int = 1600):
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers=cab)
     try:
-        dados = review.renderizar(caminho, lado)
+        dados, tipo = review.original(caminho) if lado == 0 else (review.renderizar(caminho, lado), "image/jpeg")
     except Exception as e:
         erro(f"Erro ao carregar imagem: {e}", 500)
-    return Response(dados, media_type="image/jpeg", headers=cab)
+    return Response(dados, media_type=tipo, headers=cab)
 
 
 @app.post("/api/revisor/finalizar")
