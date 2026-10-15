@@ -633,6 +633,21 @@ function curvaSuave(pts) {
   };
 }
 
+const ED_ICONES = {
+  ant: '<path d="M15 18l-6-6 6-6"/>', prox: '<path d="M9 18l6-6-6-6"/>',
+  desfazer: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11"/>', refazer: '<path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 000 11H13"/>',
+  menos: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M8 11h6"/>', mais: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M8 11h6M11 8v6"/>',
+  comparar: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/><path d="M14.5 9h4M14.5 13h4"/>',
+  copiar: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 012-2h10"/>',
+  colar: '<path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/>',
+  varias: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+  zerar: '<path d="M3 12a9 9 0 109-9 9.7 9.7 0 00-6.7 2.8L3 8"/><path d="M3 3v5h5"/>',
+  original: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 8"/>',
+  ok: '<path d="M20 6L9 17l-5-5"/>', lixo: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>', salvar: '<path d="M12 5v14M5 12h14"/>', teclado: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
+  conta: '<path d="M2 22l1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="M15 6l3-3a2.1 2.1 0 013 3l-3 3 1 1-2 2-6-6 2-2z"/>',
+};
+const edIc = n => `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ED_ICONES[n]}</svg>`;
+
 async function abrirEditor(inicio = 0) {
   let info, pre; try { [info, pre] = await Promise.all([api('/api/editor'), api('/api/editor-predefinicoes')]); } catch (e) { return toast(e.message, true); }
   if (!info.disponivel) return alerta('Editor indisponível', 'O motor de edição (LightCraft) não está instalado neste computador.');
@@ -642,16 +657,28 @@ async function abrirEditor(inicio = 0) {
   let fotos = info.fotos, i = Math.min(inicio, fotos.length - 1), aj = null, salvo = '', cf = { temp: 6500, tint: 0 }, canal = 'master';
   let antes = false, conta = false, emVoo = false, deNovo = false, urlBlob = null, versaoMini = {}, marcando = null;
   const el = document.createElement('div'); el.className = 'rev ed';
-  el.innerHTML = `<div class="bar"><button class="cinza" id="e-ant">◀</button><div class="info" id="e-info"></div><button class="cinza" id="e-prox">▶</button>
-    <span class="zgrupo"><button class="cinza" id="e-un" title="Desfazer (Ctrl+Z)">↶</button><button class="cinza" id="e-re" title="Refazer (Ctrl+Shift+Z)">↷</button></span>
-    <span class="zgrupo"><button class="cinza" id="e-zm" title="Diminuir zoom (−)">−</button><button class="cinza" id="e-zt" title="Alternar entre tela inteira e 100% (duplo clique na foto)">Tela inteira</button><button class="cinza" id="e-zp" title="Aumentar zoom (+)">+</button></span>
-    <span class="zgrupo"><button class="cinza" id="e-copiar" title="Copiar ajustes (Ctrl+C)">📋 Copiar</button><button class="cinza" id="e-colar" title="Colar nesta foto (Ctrl+V)">📥 Colar</button><button class="cinza" id="e-varias" title="Colar em várias fotos (Ctrl+Shift+V)">Colar em várias…</button></span>
-    <button class="cinza" id="e-antes" title="Ver a foto sem os ajustes (tecla \\)">Antes/Depois</button><button class="cinza" id="e-zerar" title="Zera todos os ajustes desta foto">Redefinir</button>
-    <button class="cinza" id="e-rest" title="Volta a foto original guardada">Restaurar original</button><button class="verde" id="e-fim">✅ Concluir</button></div>
+  // barra de cima: navegacao (esquerda), ferramentas de visualizacao (centro), situacao e Concluir (direita).
+  // O que mexe nos ajustes (copiar, colar, redefinir, restaurar) fica junto do painel de ajustes.
+  el.innerHTML = `<div class="ed-top">
+      <div class="ed-nav"><button class="ib" id="e-ant" title="Foto anterior (←)">${edIc('ant')}</button>
+        <div class="ed-titulo"><b id="e-num"></b><span id="e-nome"></span></div><button class="ib" id="e-prox" title="Próxima foto (→)">${edIc('prox')}</button></div>
+      <div class="ed-ferr">
+        <div class="ed-grupo-b"><button class="ib" id="e-un" title="Desfazer (Ctrl+Z)">${edIc('desfazer')}</button><button class="ib" id="e-re" title="Refazer (Ctrl+Shift+Z)">${edIc('refazer')}</button></div>
+        <div class="ed-grupo-b"><button class="ib" id="e-zm" title="Diminuir zoom (−)">${edIc('menos')}</button><button class="ib txt" id="e-zt" title="Alternar entre tela inteira e 100% (duplo clique na foto)">Tela inteira</button><button class="ib" id="e-zp" title="Aumentar zoom (+)">${edIc('mais')}</button></div>
+        <button class="ib rot" id="e-antes" title="Ver a foto sem os ajustes (tecla \\)">${edIc('comparar')}<span>Antes / Depois</span></button>
+      </div>
+      <div class="ed-dir"><span class="ed-estado" id="e-estado"></span><button class="ib" id="e-atalhos" title="Atalhos do teclado">${edIc('teclado')}</button>
+        <button class="ed-concluir" id="e-fim">${edIc('ok')}<span>Concluir</span></button></div></div>
     <div class="ed-corpo"><div class="ed-foto stage" id="e-stage"><img id="e-img" alt="" draggable="false"><div class="ed-aviso hidden" id="e-selo"></div><div class="ed-antes hidden" id="e-tag">Antes</div></div>
-    <div class="ed-painel" id="e-painel"></div></div>
-    <div class="ed-marcar hidden" id="e-marcar"></div><div class="strip" id="e-strip"></div>
-    <div class="kbd">← → trocar de foto · roda do mouse: zoom · \\ antes/depois · W conta-gotas · Ctrl+Z desfazer · Ctrl+C/Ctrl+V copiar/colar · duplo clique numa régua: padrão · Esc concluir</div>`;
+      <aside class="ed-lado">
+        <div class="ed-acoes"><button class="ac" id="e-copiar" title="Copiar os ajustes desta foto (Ctrl+C)">${edIc('copiar')}<span>Copiar</span></button>
+          <button class="ac" id="e-colar" title="Colar nesta foto (Ctrl+V)">${edIc('colar')}<span>Colar</span></button>
+          <button class="ac" id="e-varias" title="Colar em várias fotos (Ctrl+Shift+V)">${edIc('varias')}<span>Colar em várias</span></button></div>
+        <div class="ed-painel" id="e-painel"></div>
+        <div class="ed-rodape"><button class="rd" id="e-zerar" title="Zera todos os ajustes desta foto">${edIc('zerar')}<span>Redefinir</span></button>
+          <button class="rd" id="e-rest" title="Desfaz tudo e volta a foto original guardada">${edIc('original')}<span>Restaurar original</span></button></div>
+      </aside></div>
+    <div class="ed-marcar hidden" id="e-marcar"></div><div class="strip" id="e-strip"></div>`;
   document.body.appendChild(el);
   const $ = s => el.querySelector(s), img = $('#e-img'), stage = $('#e-stage'), selo = $('#e-selo');
   const zoom = criarZoom(stage, img, t => { $('#e-zt').textContent = t; });
@@ -676,13 +703,14 @@ async function abrirEditor(inicio = 0) {
   // --- painel ---
   function painel() {
     const preds = pre.predefinicoes;
-    $('#e-painel').innerHTML = `<div class="ed-pre"><span>Predefinições</span><select id="e-pre"><option value="">${preds.length ? '— aplicar uma predefinição —' : '(nenhuma salva ainda)'}</option>${preds.map((p, k) => `<option value="${k}">${esc(p.nome)}</option>`).join('')}</select>
-      <button class="cinza" id="e-pre-salvar" title="Salvar os ajustes desta foto com um nome">＋ Salvar</button><button class="cinza" id="e-pre-excluir" title="Excluir a predefinição escolhida">🗑</button></div>` +
+    $('#e-painel').innerHTML = `<div class="ed-pre"><span>Predefinições</span><select id="e-pre"><option value="">${preds.length ? 'Aplicar uma predefinição…' : 'Nenhuma salva ainda'}</option>${preds.map((p, k) => `<option value="${k}">${esc(p.nome)}</option>`).join('')}</select>
+      <div class="ed-pre-b"><button class="ib borda" id="e-pre-salvar" title="Guarda os ajustes desta foto com um nome, para usar em outras fotos">${edIc('salvar')}<span>Salvar ajustes atuais</span></button>
+      <button class="ib borda" id="e-pre-excluir" title="Excluir uma predefinição" ${preds.length ? '' : 'disabled'}>${edIc('lixo')}</button></div></div>` +
       ED_SECOES.map(([s, nome]) => `<button class="ed-sec" data-s="${s}">${fechadas.has(s) ? '▸' : '▾'} ${nome}</button>
       <div class="ed-grupo ${fechadas.has(s) ? 'hidden' : ''}">${s === 'curva' ? `<div class="ed-curva"><div class="ed-curva-top"><select id="e-canal">${ED_CANAIS.map(([c, n]) => `<option value="${c}" ${c === canal ? 'selected' : ''}>${n}</option>`).join('')}</select>
         <select id="e-cpronta"><option value="">Curva pronta…</option>${pre.curvas.map((c, k) => `<option value="${k}">${esc(c.nome)}</option>`).join('')}</select></div>
         <canvas id="e-cv"></canvas><div class="ed-dica">Clique para criar um ponto · arraste · duplo clique no ponto remove</div><div class="ed-sub">Paramétrica</div></div>` : ''}
-      ${s === 'cor' ? `<div class="ed-wb"><span>Equilíbrio de branco</span><select id="e-wb">${Object.entries(info.modos_wb).map(([m, r]) => `<option value="${m}">${esc(r)}</option>`).join('')}</select><button class="cinza" id="e-pick" title="Conta-gotas: clique num ponto que deveria ser cinza/branco (W)">🎯</button></div>` : ''}
+      ${s === 'cor' ? `<div class="ed-wb"><span>Equilíbrio de branco</span><select id="e-wb">${Object.entries(info.modos_wb).map(([m, r]) => `<option value="${m}">${esc(r)}</option>`).join('')}</select><button class="ib" id="e-pick" title="Conta-gotas: clique num ponto que deveria ser cinza/branco (W)">${edIc('conta')}</button></div>` : ''}
       ${Object.keys(C).filter(c => C[c].secao === s).map(c => `<div class="ed-ctl" data-c="${c}" title="Duplo clique: volta ao padrão"><div class="ed-lin"><span>${esc(C[c].rotulo)}</span><span class="ed-val"></span></div>
         <input type="range" class="${ED_TRILHO[c] || 'trk-centro'}" ${c === 'wb.temp' ? 'min="0" max="1000" step="1"' : `min="${C[c].min}" max="${C[c].max}" step="${C[c].passo}"`}></div>`).join('')}</div>`).join('');
     $('#e-painel').querySelectorAll('.ed-sec').forEach(b => b.onclick = () => { const s = b.dataset.s; fechadas.has(s) ? fechadas.delete(s) : fechadas.add(s); painel(); if (aj) mostraValores(); });
@@ -728,6 +756,14 @@ async function abrirEditor(inicio = 0) {
       editorCurva(cv);
     }
   }
+  // indicador na barra de cima: a pessoa sabe se o que fez ja esta gravado
+  function situacao() {
+    const s = $('#e-estado'), f = fotos[i]; if (!s || !f) return;
+    const [cls, txt] = f.estado === 'salvando' ? ['salvando', 'Salvando…'] : f.estado.startsWith('erro') ? ['erro', 'Erro ao salvar']
+      : aj && ajTexto() !== salvo ? ['alterado', 'Alterado'] : f.editada ? ['salvo', 'Salvo'] : ['', 'Sem ajustes'];
+    s.className = 'ed-estado ' + cls; s.textContent = txt;
+    s.title = f.estado.startsWith('erro') ? f.estado : cls === 'alterado' ? 'As alterações são salvas sozinhas ao trocar de foto ou ao concluir' : '';
+  }
   function mostraValores() {
     $('#e-painel').querySelectorAll('.ed-ctl').forEach(d => {
       const c = d.dataset.c, x = valor(c), r = d.querySelector('input');
@@ -736,7 +772,7 @@ async function abrirEditor(inicio = 0) {
     });
     const s = $('#e-wb'); if (s) s.value = aj.wb.modo;
     const p = $('#e-pick'); if (p) p.classList.toggle('ativo', conta);
-    curva();
+    curva(); situacao();
   }
 
   // --- curva de pontos (canvas) ---
@@ -872,6 +908,7 @@ async function abrirEditor(inicio = 0) {
       if (marcando) { marcando.has(k) ? marcando.delete(k) : marcando.add(k); barraMarcar(); tira(); } else ir(k);
     });
     const cur = $('#e-strip .tb.cur'); if (cur) cur.scrollIntoView({ block: 'nearest', inline: 'center' });
+    situacao();
   }
   async function atualizaLista() {
     try {
@@ -888,7 +925,7 @@ async function abrirEditor(inicio = 0) {
   }
   async function carregar() {
     aj = null;
-    $('#e-info').innerHTML = `<b>Foto ${i + 1}/${fotos.length}</b> · ${esc(fotos[i].nome)}`;
+    $('#e-num').textContent = `Foto ${i + 1} de ${fotos.length}`; $('#e-nome').textContent = fotos[i].nome; situacao();
     zoom.foto(`/api/revisor/imagem/${i}?v=${v}${versaoMini[i] ? '&m=' + versaoMini[i] : ''}`, '');   // aparece na hora; a previa do LightCraft vem em seguida
     tira();
     try {
@@ -900,8 +937,8 @@ async function abrirEditor(inicio = 0) {
       salvo = ajTexto(); $('#e-rest').disabled = !d.editada; hist(); botoesHist(); mostraValores(); agendar();
     } catch (e) { aviso(e.message); }
   }
-  function ir(k) { if (k < 0 || k >= fotos.length || k === i) return; salvarSeMudou(); i = k; antes = false; $('#e-tag').classList.add('hidden'); contaGotas(false); carregar(); }
-  function alternarAntes() { antes = !antes; $('#e-tag').classList.toggle('hidden', !antes); agendar(); }
+  function ir(k) { if (k < 0 || k >= fotos.length || k === i) return; salvarSeMudou(); i = k; antes = false; $('#e-tag').classList.add('hidden'); $('#e-antes').classList.remove('ativo'); contaGotas(false); carregar(); }
+  function alternarAntes() { antes = !antes; $('#e-tag').classList.toggle('hidden', !antes); $('#e-antes').classList.toggle('ativo', antes); agendar(); }
   const vigia = setInterval(async () => { if (fotos.some(f => f.estado === 'salvando')) await atualizaLista(); }, 1500);
   async function concluir() {
     salvarSeMudou(); clearInterval(vigia);
@@ -933,6 +970,11 @@ async function abrirEditor(inicio = 0) {
   $('#e-ant').onclick = () => ir(i - 1); $('#e-prox').onclick = () => ir(i + 1); $('#e-antes').onclick = alternarAntes; $('#e-fim').onclick = concluir;
   $('#e-un').onclick = () => passo(-1); $('#e-re').onclick = () => passo(1);
   $('#e-zm').onclick = zoom.menos; $('#e-zp').onclick = zoom.mais; $('#e-zt').onclick = zoom.alternar;
+  $('#e-atalhos').onclick = () => modal(`<h2>⌨ Atalhos do editor</h2><table class="ed-atalhos">${[
+    ['← →', 'Foto anterior / próxima'], ['Roda do mouse, + −', 'Zoom'], ['1 ou duplo clique', '100% (pixel real)'], ['0', 'Tela inteira'],
+    ['\\', 'Antes / Depois'], ['W', 'Conta-gotas do equilíbrio de branco'], ['Ctrl+Z / Ctrl+Shift+Z', 'Desfazer / Refazer'],
+    ['Ctrl+C', 'Copiar ajustes'], ['Ctrl+V', 'Colar nesta foto'], ['Ctrl+Shift+V', 'Colar em várias fotos'],
+    ['Duplo clique na régua', 'Volta a régua ao padrão'], ['Esc', 'Concluir a edição']].map(([t, d]) => `<tr><td><kbd>${esc(t)}</kbd></td><td>${esc(d)}</td></tr>`).join('')}</table>`, [{ t: 'Fechar', v: true }]);
   $('#e-copiar').onclick = copiar; $('#e-colar').onclick = colar; $('#e-varias').onclick = colarEmVarias;
   $('#e-zerar').onclick = () => { if (!aj) return; aj = zerados(); mudou(); };
   $('#e-rest').onclick = async () => {
